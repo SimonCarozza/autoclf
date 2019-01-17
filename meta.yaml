@@ -1,0 +1,25 @@
+package:
+  name: autoclf
+  version: "0.1.4"
+
+source:
+  # git_rev: 0.1.4
+  git_url: https://simoneci@bitbucket.org/simoneci/autoclf.git
+
+requirements:
+  build:
+    - python 3.6
+    - setuptools
+  run:
+    - python 3.6
+    - numpy {{ numpy }}
+    - scikit-learn
+    - keras
+    - matplotlib {{ matplotlib }}
+    - pandas
+    - py-xgboost>=0.8
+
+about:
+  home: https://bitbucket.org/simoneci/autoclf/
+  license: MIT License
+  license_file: LICENSE

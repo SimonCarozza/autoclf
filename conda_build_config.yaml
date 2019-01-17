@@ -1,0 +1,6 @@
+numpy:
+  - 1.15
+matplotlib:
+  - 3.0.2
+pyxgboost:
+  - 0.80
