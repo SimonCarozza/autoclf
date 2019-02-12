@@ -40,4 +40,7 @@ setup(
         "tensorflow"
     ],
     extras_require={"py-xgboost": ["py-xgboost==0.8"]},
-    package_data={"autoclf": ["datasets/*.csv"]})
+    package_data={
+        "autoclf": [
+            "datasets/*.csv", "datasets/ReadMe.txt", 
+            "datasets/*.zip"]})
