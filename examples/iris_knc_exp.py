@@ -28,7 +28,7 @@ if __name__ == '__main__':
     d_name = ga.get_name()
 
     if d_name is None:
-        d_name = "Iriskn"
+        d_name = "Iris"
 
     seed = 7
     np.random.seed(seed)
@@ -87,12 +87,12 @@ if __name__ == '__main__':
     print("Calibration of untrained models -- CCCV 2nd")
     print()
 
-    # if scoring in ('neg_log_loss', 'brier_score_loss'):
-    best_score = 10**4    # 0.0
-    best_score_dev = 10**2
-    best_cv_results = 10**4*np.ones(n_splits)
+    best_atts = eu.best_model_initial_attributes(scoring, n_splits)
+
+    best_score, best_score_dev, best_cv_results, best_model_name = best_atts
+
     best_exec_time = 31536000    # one year in seconds
-    best_model = ('Worst', None, None)
+    best_model = (best_model_name, None, None)
 
     Dummy_scores = []
 
@@ -106,7 +106,8 @@ if __name__ == '__main__':
     scores_of_best_model = scores_of_worst_model
 
     average_scores_and_best_scores = dict()
-    average_scores_and_best_scores['Worst'] \
+    # best_model_name == 'Worst
+    average_scores_and_best_scores[best_model_name] \
     = (best_score, best_score_dev, best_exec_time, best_model, {})
 
     # Start evaluation process
@@ -139,15 +140,17 @@ if __name__ == '__main__':
 
     all_models_and_parameters = dict()
 
+    test_model_name = 'KNeighborsClf_2nd'
+
     # Let's assume the best model is GaussianNB 
 
     print("=== [task] Comparing DummyClassifier to KNeighborsClassifier")
     print()
 
     evaluation_result = eu.single_nested_rscv_evaluation(
-        X_train_transformed, y_train, 'KNeighborsClf_2nd',
-        pgd.full_search_models_and_parameters['KNeighborsClf_2nd'][0], 
-        pgd.full_search_models_and_parameters['KNeighborsClf_2nd'][1],
+        X_train_transformed, y_train, test_model_name,
+        pgd.full_search_models_and_parameters[test_model_name][0], 
+        pgd.full_search_models_and_parameters[test_model_name][1],
         wtr, scoring, n_iter, inner_cv, outer_cv, 
         average_scores_and_best_scores, scores_of_best_model, 
         results, names, seed)
@@ -191,7 +194,8 @@ if __name__ == '__main__':
             print("'%s' is quicker than DummyClf." % best_model_name)
         print()
         print()
-        input("Press key to continue...")
+        all_models_and_parameters[best_model_name] = (
+            best_model, pgd.full_search_models_and_parameters[best_model_name][1])
 
         preprocessing = (encoding, scaler_tuple, featselector)
 
@@ -202,11 +206,12 @@ if __name__ == '__main__':
         print("Defined dictionary with models, parameters and related data.")
         print()
 
-        tc.calibrate_best_model(
+        # nb_epoch = 0
+        tc.tune_calibrate_best_model(
             X, y, X_train_transformed, X_test_transformed,
             y_train, y_test, auto_feat_eng_data['tt_index'], 
             preprocessing, scores_of_best_model,
-            all_models_and_parameters, n_splits, 0,
+            all_models_and_parameters, n_splits, n_iter, 0,
             scoring, models_data, d_name, seed)
     else:
         sys.exit("Your best classifier is not a good classifier.")

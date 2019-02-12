@@ -89,10 +89,6 @@ clfs = []
 
 try:
     if sklearn.__version__[:4] == '0.19':
-        moddir = os.path.dirname(__file__)
-        vclf_pkl = os.path.join(
-            moddir, "models", "iris_VClf_3_2nd__no_calib_rscv_0824.pkl")
-        clfs.append(jl.load(vclf_pkl))
         # Using Python 3's pathlib module
         moddir_36 = pl.Path(__file__).parent.resolve()
         rf_pkl = os.path.join(
@@ -105,6 +101,8 @@ try:
             moddir_36, "models",
             "iris_LogRClf_2nd_final_calib_rscv_0429.pkl")
         clfs.append(jl.load(lr_pkl))
+        clfs.append(jl.load(
+            "models/Iris_KNeighborsClf_2nd_final_nocalib_rscv_0136.pkl"))
 except FileNotFoundError as fne:
     print(fne)
 except Exception:

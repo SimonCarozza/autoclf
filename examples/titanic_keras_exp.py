@@ -21,8 +21,28 @@ from autoclf import auto_utils as au
 from autoclf.classification import neuralnets as nn
 from autoclf.classification import train_calibrate as tc
 import autoclf.getargs as ga
+from autoclf.classification.param_grids_distros import Keras_param_grid
+from autoclf.classification.evaluate import create_keras_classifiers
+from autoclf.classification.evaluate import create_best_keras_clf_architecture
 from pkg_resources import resource_string
 from io import StringIO
+
+def select_cv_method():
+
+    is_valid = 0
+    choice = 0
+
+    while not is_valid:
+        try:
+            choice = int(input("Select cv method: [1] Classical CV, [2] Nested-CV?\n"))
+            if choice in (1, 2):
+                is_valid = 1
+            else:
+                print("Invalid number. Try again...")
+        except ValueError as e:
+            print("'%s' is not a valid integer." % e.args[0].split(": ")[1])
+
+    return choice
 
 
 # starting program
@@ -234,74 +254,56 @@ if __name__ == '__main__':
     # nr of layers and nr of nodes by using Grid or Randomized Search CV
 
     input_dim = int(X_train_transformed.shape[1])
-    nb_epoch = au.select_nr_of_iterations('nn')
-
     output_dim = 1
 
-    batch_size = 32
-
-
-    # you could grid search nn_model's parameters space using hyperas...
-    # you need KerasClassifier wrapper to use Keras models in sklearn
-
-    baseline_nn_default = KerasClassifier(
-        build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-        input_dim=input_dim, batch_size=batch_size, verbose=0
-        )
-
-    complex_models_and_parameters['baseline_nn_default_Clf_2nd'] = baseline_nn_default
-
-    # build smaller layer
-
-    baseline_nn_smaller = KerasClassifier(
-        build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-        input_dim=input_dim, batch_size=batch_size, verbose=0
-        )
-
-    complex_models_and_parameters['baseline_nn_smaller_Clf_2nd'] = baseline_nn_smaller
-
-    # build larger layer
-
-    larger_nn = KerasClassifier(
-        build_fn=nn.larger_nn_model, nb_epoch=nb_epoch,
-        input_dim=input_dim, batch_size=batch_size, verbose=0
-        )
-
-    complex_models_and_parameters['larger_nn_Clf_2nd'] = larger_nn
-
-    # shallow deep nn
-
-    small_deep_nn = KerasClassifier(
-        build_fn=nn.deep_nn_model, nb_epoch=nb_epoch, input_dim=input_dim,
-        batch_size=batch_size, verbose=0
-        )
-
-    complex_models_and_parameters['deep_nn_Clf_2nd'] = small_deep_nn
-
-    # deeper deep nn
-
-    deep_nn = KerasClassifier(
-        build_fn=nn.deeper_nn_model, nb_epoch=nb_epoch,
-        input_dim=input_dim, batch_size=batch_size, verbose=0
-        )
-
-    complex_models_and_parameters['deeper_nn_Clf_2nd'] = deep_nn
+    nb_epoch = au.select_nr_of_iterations('nn')
 
     # evaluate Keras clfs
+    
+    cv_method = select_cv_method()
 
-    average_scores_and_best_scores = eu.classic_cv_model_evaluation(
-        X_train_transformed, y_train, complex_models_and_parameters, scoring,
-        outer_cv, average_scores_across_outer_folds_complex,
-        scores_of_best_model, results, names, seed)
+    if cv_method == 1:
+
+        batch_size = 32
+
+        complex_models_and_parameters = create_keras_classifiers(
+            Y_type, input_dim, output_dim, labels, nb_epoch, batch_size)
+
+        average_scores_and_best_scores = eu.classic_cv_model_evaluation(
+            X_train_transformed, y_train, complex_models_and_parameters, scoring,
+            outer_cv, average_scores_across_outer_folds_complex,
+            scores_of_best_model, results, names, seed)
+
+    else: 
+
+        inner_cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+
+        n_iter = au.select_nr_of_iterations()
+
+        keras_clf_name = "KerasClf_2nd"
+
+        keras_nn_model, keras_param_grid = create_best_keras_clf_architecture(
+            keras_clf_name, Y_type, labels, input_dim, output_dim, 
+            nb_epoch, Keras_param_grid)
+
+        complex_models_and_parameters[keras_clf_name] = (
+            keras_nn_model, keras_param_grid)
+
+        average_scores_and_best_scores = eu.nested_rscv_model_evaluation(
+            X_train_transformed, y_train, complex_models_and_parameters,
+            scoring, n_iter, inner_cv, outer_cv,
+            average_scores_across_outer_folds_complex, scores_of_best_model,
+            results, names, seed)
 
     print()
     au.box_plots_of_models_performance(results, names)
 
+    cv_method_name = "Classic" if cv_method == 1 else "Nested"
+
     print()
-    print("=== After Classic CV evaluation of Keras NNs...")
+    print("=== After %s CV evaluation of Keras NNs..." % cv_method_name)
     print()
 
-    average_scores_across_outer_folds_for_each_model = average_scores_and_best_scores[0]
     scores_of_best_model = average_scores_and_best_scores[1]
 
     best_model_name = scores_of_best_model[4][0]
@@ -324,7 +326,8 @@ if __name__ == '__main__':
           (best_model_name, scoring.strip('neg_'), best_score, best_score_dev))
     if best_model_name in (
             'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd', 
+            'KerasClf_2nd'):
         best_nn_build_fn = scores_of_best_model[4][2]
         print("Best build function:", best_nn_build_fn)
     print("... execution time: %.2fs" % best_exec_time)
@@ -352,12 +355,23 @@ if __name__ == '__main__':
         print("Defined dictionary with models, parameters and related data.")
         print()
 
-        tc.calibrate_best_model(
-            X, y, X_train_transformed, X_test_transformed,
-            y_train, y_test, auto_feat_eng_data['tt_index'], 
-            preprocessing, scores_of_best_model,
-            all_models_and_parameters, n_splits, nb_epoch,
-            scoring, models_data, d_name, seed)
+        if cv_method == 1:
+
+            tc.calibrate_best_model(
+                X, y, X_train_transformed, X_test_transformed,
+                y_train, y_test, auto_feat_eng_data['tt_index'], 
+                preprocessing, scores_of_best_model,
+                all_models_and_parameters, n_splits, nb_epoch,
+                scoring, models_data, d_name, seed)
+        else:
+
+            tc.tune_calibrate_best_model(
+                X, y, X_train_transformed, X_test_transformed,
+                y_train, y_test, auto_feat_eng_data['tt_index'], 
+                preprocessing, scores_of_best_model,
+                all_models_and_parameters, n_splits, n_iter, nb_epoch,
+                scoring, models_data, d_name, seed)
+
     else:
         sys.exit("Your best classifier is not a good classifier.")
 

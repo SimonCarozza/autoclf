@@ -5,10 +5,11 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import QuantileTransformer
 
 from sklearn.externals import joblib as jl
+from sklearn.externals.joblib.my_exceptions import JoblibValueError
 import errno
 import os
 import sys
-import re
+from re import search
 from random import randint
 import numpy as np
 import matplotlib.pyplot as plt
@@ -540,7 +541,7 @@ def plot_learning_curve(estimator, X, y, ylim=None, cv=None, scoring=None,
 
     name = ''
     for step in estimator.steps:
-        m = re.search("Clf", step[0])
+        m = search("Clf", step[0])
         if m:
             name = step[0]
 
@@ -551,14 +552,14 @@ def plot_learning_curve(estimator, X, y, ylim=None, cv=None, scoring=None,
 
     if serial is None:
         try:
-            re.search(r'(?<=_)\d{4}', name).group(0)
+            search(r'(?<=_)\d{4}', name).group(0)
         except AttributeError as ae:
             print(ae)
             serial = "%04d" % randint(0, 1000)
         except Exception as e:
             print(e)
         else:
-            serial = re.search(r'(?<=_)\d{4}', name).group(0)
+            serial = search(r'(?<=_)\d{4}', name).group(0)
             # clf_name = sys.argv[0][:5] + "_" + name + "_" + tuning + "_" + serial
             clf_name = name + "_" + tuning + "_" + serial
 
@@ -566,50 +567,77 @@ def plot_learning_curve(estimator, X, y, ylim=None, cv=None, scoring=None,
         # clf_name = sys.argv[0][:5] + "_" + name + "_" + tuning + "_" + serial
         clf_name = name + "_" + tuning + "_" + serial
 
-    print("Saving: %s's learning curve" % name)
-
     title = "Learning Curve for '%s'" % clf_name
 
-    plt.figure()
-    plt.title(title)
-    if ylim is not None:
-        plt.ylim(*ylim)
-    plt.xlabel("Training examples")
-    plt.ylabel("Score: '%s'" % scoring)
-
-    train_sizes, train_scores, test_scores = learning_curve(
-        estimator, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs,
-        train_sizes=train_sizes)
-
-    train_scores_mean = np.mean(train_scores, axis=1)
-    train_scores_std = np.std(train_scores, axis=1)
-    test_scores_mean = np.mean(test_scores, axis=1)
-    test_scores_std = np.std(test_scores, axis=1)
-
-    plt.grid()
-
-    plt.fill_between(
-        train_sizes, train_scores_mean - train_scores_std,
-        train_scores_mean + train_scores_std, alpha=0.1, color="r")
-    plt.fill_between(
-        train_sizes, test_scores_mean - test_scores_std,
-        test_scores_mean + test_scores_std, alpha=0.1, color="g")
-    plt.plot(
-        train_sizes, train_scores_mean, 'o-', color="r",
-        label="Training score")
-    plt.plot(
-        train_sizes, test_scores_mean, 'o-', color="g",
-        label="Cross-validation score")
-
-    plt.legend(loc="best")
+    l_curve = 0
 
     try:
-        fig_name = os.path.join(curdir, directory, "learning_curve_" + clf_name)
-    except FileNotFoundError as fe:
-        print(fe)
-    except Exception as e:
-        print(e)
+        train_sizes, train_scores, test_scores = learning_curve(
+        estimator, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs,
+        train_sizes=train_sizes)
+    except JoblibValueError as jve:
+        print("Not able to complete learning process...")
+    except RuntimeError as re:
+        print(re)
+    except ValueError as ve:
+        print(ve)
     else:
-        plt.savefig(fig_name + ".png", format='png')
 
-    return plt
+        train_scores_mean = np.mean(train_scores, axis=1)
+        train_scores_std = np.std(train_scores, axis=1)
+        test_scores_mean = np.mean(test_scores, axis=1)
+        test_scores_std = np.std(test_scores, axis=1)
+
+        plt.figure()
+        plt.title(title)
+        if ylim is not None:
+            plt.ylim(*ylim)
+        plt.xlabel("Training examples")
+        plt.ylabel("Score: '%s'" % scoring)
+
+        plt.grid()
+
+        plt.fill_between(
+            train_sizes, train_scores_mean - train_scores_std,
+            train_scores_mean + train_scores_std, alpha=0.1, color="r")
+        plt.fill_between(
+            train_sizes, test_scores_mean - test_scores_std,
+            test_scores_mean + test_scores_std, alpha=0.1, color="g")
+        plt.plot(
+            train_sizes, train_scores_mean, 'o-', color="r",
+            label="Training score")
+        plt.plot(
+            train_sizes, test_scores_mean, 'o-', color="g",
+            label="Cross-validation score")
+
+        plt.legend(loc="best")
+
+        l_curve = 1
+
+        try:
+            fig_name = os.path.join(
+                curdir, directory, "learning_curve_" + clf_name)
+        except FileNotFoundError as fe:
+            print(fe)
+        except Exception as e:
+            print(e)
+
+        saved = 0
+    
+        try:
+            plt.savefig(fig_name + ".png", format='png')
+            saved = 1
+        except Exception as e:
+            print(e)
+        finally:
+            if not saved:
+                print("Sorry, could not save learning curve")
+            else:
+                print("Saved %s's learning curve" % name)
+
+    finally:
+        if not l_curve:
+            print("Sorry. Learning Curve plotting failed.")
+            print()
+        else:
+            plt.show()

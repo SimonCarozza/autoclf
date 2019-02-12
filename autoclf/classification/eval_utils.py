@@ -62,7 +62,7 @@ from keras.wrappers.scikit_learn import KerasClassifier
 sys.stderr = stderr
 
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
 
 
 # Methods
@@ -152,7 +152,8 @@ def model_finalizer(
 
     if model_name not in (
         'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+        'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+        'deeper_nn_Clf_2nd', 'KerasClf_2nd'):
         au.save_model(finalized_estimator, f_name + '.pkl')
     else:
         keras_f_name = au.create_keras_model_filename(f_name)
@@ -201,7 +202,17 @@ def rscv_tuner(
     print("[task] === Hyperparameter tuning of %s with 'RandomizedSearchCV'"
           % name)
 
-    clf.fit(dx, dy)
+    try:
+        clf.fit(dx, dy)
+    except TypeError as te:
+        print(te)
+        if hasattr(dx, 'values') is True:
+            dx = dx.values
+        if hasattr(dx, 'values') is True:
+            dx = dx.values
+        clf.fit(dx.values, dy.values)
+    except Exception as e:
+        raise e
 
     return clf.best_params_ if not refit else clf.best_estimator_
 
@@ -209,8 +220,8 @@ def rscv_tuner(
 # works only for single-metric evaluation
 def tune_and_evaluate(
         estimator, dx_train, dy_train, dx_test, dy_test, splits, param_grid,
-        n_iter, scoring, models_data, refit, random_state, serial=0,
-        save=False):
+        n_iter, scoring, models_data, refit, random_state, serial=0, 
+        d_name=None, save=False):
     """Tune and evaluate estimator with the options of refit and saving it."""
     if (isinstance(scoring, list) or isinstance(scoring, dict)
             or isinstance(scoring, tuple)):
@@ -230,20 +241,20 @@ def tune_and_evaluate(
         for step in estimator.steps:
             m = re.search("Clf", step[0])
             if m:
-                if is_classifier(step[1]):
+                if is_classifier(step[1]) or re.search("KerasClf", step[0]):
                     name = step[0]
                 else:
                     raise TypeError(
-                        "%r is not a valid estimator;\n" 
+                        "%r is not a valid classifier;\n" 
                         "a valid estimator is of type 'ClassifierMixin'" 
-                        % estimator)
+                        % step[1])
     elif is_classifier(estimator):
         name = 'classifier'
         param_grid = {
             k.split('__')[1]: v for k, v in param_grid.items()}
     else:
         raise TypeError(
-            "%r is not a valid estimator; valid estimators are\n"
+            "%r is not a valid estimator for classification; valid estimators are\n"
             "of type ['Pipeline', 'ClassifierMixin']" % estimator)
 
     # kfold = KFold(n_splits=10, random_state=random_state)
@@ -266,6 +277,7 @@ def tune_and_evaluate(
     except Exception as e:
         raise e
 
+    print()
     print("[task] === Hyperparameter Tuning %s with '%s'" % (name, clf_name))
     # automatize this based on search mode
     # if refit==True:
@@ -296,29 +308,7 @@ def tune_and_evaluate(
         dy_type = mc.type_of_target(dy_train)
 
         predicted = clf.predict(dx_train)
-        y_pred = clf.predict(dx_test)
 
-        print("=== Predictions with %s after %s" % (name, clf_name))
-        print("target:\n", dy_train[0:5])
-        print("predictions:\n", predicted[0:5])
-
-        if hasattr(clf, "predict_proba"):
-            predicted_probas = np.array(clf.predict_proba(dx_test))
-            if dy_type == "binary":
-                y_prob = []
-                # consider label '0' --> 'dead'; label '1' --> 'survived'
-                for probas in predicted_probas:
-                    y_prob.append(probas[1])
-            else:
-                y_prob = predicted_probas
-            print("predicted probabilities before calibration:\n",
-                  predicted_probas[0:3])
-        else:
-            # use decision function
-            print("Model '%s' hasn't got 'predict_proba' as an attribute"
-                  % clf)
-            y_prob = clf.decision_function(dx_test)
-            y_prob = (y_prob - y_prob.min())/(y_prob.max() - y_prob.min())
         print("=== '%s''s performance & accuracy of predictions" % name)
 
         if scoring is None:
@@ -338,26 +328,63 @@ def tune_and_evaluate(
         print("Mean cv score [%s] of the best_estimator: %1.3f"
               % (ret_scoring.strip('neg_'), mean_rscv_score))
 
-        if dy_test.max():
-            # consider label '0' --> negative class;
-            # label '1' --> positive class
-            log_loss_score = log_loss(dy_test, y_prob)
-            brier_score = brier_score_loss(dy_test, y_prob, pos_label=1)
-            w = np.ones(dy_test.shape[0])
-            for idx, i in enumerate(np.bincount(dy_test)):
-                w[dy_test == idx] *= (i/float(dy_test.shape[0]))
-            print("Accuracy of predictions on new data %.2f%%"
-                  % (accuracy_score(dy_test, y_pred, sample_weight=w)*100))
-            print("=== Predicted probabilities confidence for '%s'" % name)
-            print("log loss for '%s': %1.3f" % (name, log_loss_score))
-            print("brier score: %1.3f" % brier_score)
-            print()
+        if dx_test is not None:
+            y_pred = clf.predict(dx_test)
+
+            print("=== Predictions with %s after %s" % (name, clf_name))
+            print("target:\n", dy_train[0:5])
+            print("predictions:\n", predicted[0:5])
+
+            if hasattr(clf, "predict_proba"):
+                predicted_probas = np.array(clf.predict_proba(dx_test))
+                if dy_type == "binary":
+                    y_prob = []
+                    # consider label '0' --> 'negative'; label '1' --> 'positive'
+                    for probas in predicted_probas:
+                        y_prob.append(probas[1])
+                else:
+                    y_prob = predicted_probas
+                print("predicted probabilities before calibration:\n",
+                        predicted_probas[0:3])
+            else:
+                # use decision function
+                print("Model '%s' hasn't got 'predict_proba' as an attribute"
+                        % clf)
+                y_prob = clf.decision_function(dx_test)
+                y_prob = (y_prob - y_prob.min())/(y_prob.max() - y_prob.min())
+
+            w = calculate_sample_weight(dy_test)
+
+            print("Accuracy of predictions on new data %.2f%%" % (
+                accuracy_score(dy_test, y_pred, sample_weight=w)*100))
+            if dy_test.max():
+                # consider label '0' --> negative class;
+                # label '1' --> positive class
+                log_loss_score = log_loss(dy_test, y_prob)
+                brier_score = brier_score_loss(dy_test, y_prob, pos_label=1)
+                print("=== Predicted probabilities confidence for '%s'" % name)
+                print("log loss for '%s': %1.3f" % (name, log_loss_score))
+                print("brier score: %1.3f" % brier_score)
+                print()
+
             print("Confusion matrix for %s after %s\n" % (name, clf_name),
                   confusion_matrix(dy_test, y_pred))
             print()
             print("Classification report for %s after %s\n" % (name, clf_name),
                   classification_report(dy_test, y_pred))
             print()
+
+            got_preds = 0
+            try:
+                models_data.append((f_name, y_prob, y_pred))
+                got_preds = 1
+            except Exception as e:
+                print(e)
+            finally:
+                if got_preds == 1:
+                    pass
+                else:
+                    print("Failed to add predictions to models_data")
 
         best_clf = clf.best_estimator_
 
@@ -374,13 +401,27 @@ def tune_and_evaluate(
             if not serial:
                 serial = "%04d" % randint(0, 1000)    # %04d
 
-            f_name = name + '_nofinal_calib_' + tuning + '_' + serial
+            f_name = name + '_refitted_' + tuning + '_' + serial
+
+            if d_name is not None:
+                f_name = d_name + "_" + f_name
 
             try:
-                # here you should save the pipeline only if refit==True
-                # in next version, deprecate this
-                # save only finalized pipeline
-                au.save_model(best_clf, f_name + '.pkl')
+                if name not in (
+                    'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
+                    'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+                    'deeper_nn_Clf_2nd', 'KerasClf_2nd'):
+                    au.save_model(best_clf, f_name + '.pkl')
+                else:
+                    saved_estimator = best_clf
+                    keras_f_name = au.create_keras_model_filename(f_name)
+                    saved_estimator.named_steps[name].model.save(keras_f_name + '.h5')
+
+                    if(len(saved_estimator.steps)) > 1:
+                        saved_estimator.named_steps[name].model = None
+                        f_name = name + '_' + tuning + '_for_keras_model_' + serial
+
+                        au.save_model(saved_estimator, f_name + '.pkl')
                 saved = 1
             except Exception as e:
                 print(e)
@@ -390,17 +431,6 @@ def tune_and_evaluate(
                 else:
                     print("Failed to save model to file")
 
-            got_preds = 0
-            try:
-                models_data.append((f_name, y_prob, y_pred))
-                got_preds = 1
-            except Exception as e:
-                print(e)
-            finally:
-                if got_preds == 1:
-                    pass
-                else:
-                    print("Failed to add predictions to models_data")
         else:
             pass
 
@@ -514,8 +544,8 @@ def probability_confidence_before_calibration(
         try:
             if name not in (
                 'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-                    'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd',
-                    'deeper_nn_Clf_2nd'):
+                'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+                'deeper_nn_Clf_2nd', 'KerasClf_2nd'):
                 au.save_model(unc_estimator, f_name + '.pkl')
             else:
                 saved_estimator = unc_estimator
@@ -571,369 +601,7 @@ def probability_confidence_before_calibration(
     return unc_est_data
 
 
-def check_need_for_calibration(
-        dx_train, dy_train, dx_valid, dy_valid, dx_test, dy_test, p_estimator,
-        p_clf_score, p_pred_score, ref_pred_score, scoring, n_splits,
-        param_grid, n_iter, cv):
-    """
-    Check whether estimator needs calibration.
-
-    ---
-    p_estimator: pipeline from probability check that may need calibration
-
-    p_pred_score: prediction confidence of uncalibrated  pipeline/model
-
-    lr_pred_score: prediction confidence of LogisticRegressor
-
-    --- return
-
-    checked_estimator: estimator that had its predictin confidence checked and
-    got eventually calibrated
-    """
-    if (isinstance(scoring, list) or isinstance(scoring, dict) or
-            isinstance(scoring, tuple)):
-        raise TypeError("""
-        'check_need_for_calibration' method takes only single-metric
-        score values.""")
-    if scoring not in (None, 'accuracy', 'roc_auc', 'neg_log_loss'):
-        raise ValueError("""
-        %s is not a valid scoring value for
-        method 'check_need_for_calibration'. Valid options are ['accuracy',
-        'roc_auc', 'neg_log_loss']"""
-                         % scoring)
-
-    name = ''
-    for step in p_estimator.steps:
-        m = re.search("Clf", step[0])
-        if m:
-            name = step[0]
-
-    checked_estimator = p_estimator
-
-    # if name != 'LogRClf_2nd':
-    if p_pred_score <= ref_pred_score:
-        print("'%s' is already well calibrated." % name)
-
-        dx_train = np.concatenate((dx_train, dx_valid), axis=0)
-        dy_train = np.concatenate((dy_train, dy_valid), axis=0)
-
-        if name == 'GaussianNBClf_2nd':
-            checked_estimator = p_estimator.fit(dx_train, dy_train)
-        else:
-            # checked_estimator
-            checked_estimator = rscv_tuner(
-                p_estimator, dx_train, dy_train, n_splits, param_grid, n_iter,
-                scoring, refit=True)
-
-    else:
-        # p_pred_score > lr_pred_score
-        print("'%s' needs probability calibration." % name)
-        print()
-
-        # In case model/p_estimator tuned on (train_i = train - valid) data
-        # needs calibration
-        calib_data = calibrate_probabilities(
-            p_estimator, dx_valid, dy_valid, dx_test, dy_test, 'sigmoid',
-            'rscv', [], cv, None
-            )
-
-        calib_t_cclf_pred_score = calib_data[0]
-        calib_t_cclf = calib_data[1]
-
-        if calib_t_cclf_pred_score >= p_pred_score:
-            print("Sorry, we could not calibrate '%s' any better." % name)
-            print("Reject calibrated '%s' and keep the uncalibrated one."
-                  % name)
-
-            dx_train = np.concatenate((dx_train, dx_valid), axis=0)
-            dy_train = np.concatenate((dy_train, dy_valid), axis=0)
-
-            # checked_estimator
-            if name == 'GaussianNBClf_2nd':
-                checked_estimator = p_estimator.fit(dx_train, dy_train)
-            else:
-                # checked_estimator
-                checked_estimator = rscv_tuner(
-                    p_estimator, dx_train, dy_train, n_splits, param_grid,
-                    n_iter, scoring, refit=True)
-
-        else:
-            print("Achieved better calibration of model '%s'." % name)
-
-            checked_estimator = calib_t_cclf
-
-            # final
-
-    try:
-        checked_estimator
-    except NameError as ne:
-        print(ne)
-    except Exception as e:
-        print(e)
-    else:
-        print("Finalized calibrated best model '%s'." % name)
-        if type(checked_estimator) != CalibratedClassifierCV:
-            for step in checked_estimator.steps:
-                print(type(step))
-                print("step:", step[0])
-                params = step[1].get_params()
-                for param_name in sorted(params.keys()):
-                    print("\t%s: %r" % (param_name, params[param_name]))
-            print()
-
-    return checked_estimator
-
-
-def calibrate_estimators_for_soft_voting(
-        top_models_data, dx_train, dy_train, dx_valid, dy_valid, dx_test,
-        dy_test, n_splits, n_iter, scoring, ref_pred_score, cv, tuning_method,
-        scale_tpl=None, f_select=None):
-    """Calibrate estimators for VotingClassifier w soft voting."""
-    if (isinstance(scoring, list) or isinstance(scoring, dict)
-            or isinstance(scoring, tuple)):
-        raise TypeError("""
-            'calibrate_estimators_for_soft_voting' method takes only
-            single-metric score values.""")
-    if scoring not in (None, 'accuracy', 'roc_auc', 'neg_log_loss'):
-        raise ValueError("""
-            %s is not a valid scoring value for method
-            'calibrate_estimators_for_soft_voting'. Valid options are
-            ['accuracy', 'roc_auc', 'neg_log_loss']""" % scoring)
-
-    vc_top_estimators = []
-
-    nr_clf = 1
-
-    for name, (_, _, _, model, params) in top_models_data.items():
-
-        steps = []
-        # ...
-        if scale_tpl:
-            steps.append(scale_tpl)
-        if f_select:
-            steps.append(f_select)
-
-            trans_pipeline = Pipeline(steps)
-
-            transformer = trans_pipeline.fit(dx_train, dy_train)
-
-            dx_train = transformer.transform(dx_train)
-            dx_test = transformer.transform(dx_test)
-            dx_valid = transformer.transform(dx_valid)
-
-            del trans_pipeline
-
-        steps.append((name, model))
-        target_pipeline = Pipeline(steps)
-
-        if name != 'GaussianNBClf_2nd':
-            best_parameters = rscv_tuner(
-                target_pipeline, dx_train, dy_train, n_splits, params, n_iter,
-                scoring, refit=False)
-
-            target_pipeline.set_params(**best_parameters)
-        else:
-            target_pipeline
-
-        # check predicted probabilities for prediction confidence
-        uncalibrated_p_data = probability_confidence_before_calibration(
-            target_pipeline, dx_valid, dy_valid, dx_test, dy_test,
-            tuning_method, [], None)
-
-        p_pred_score = uncalibrated_p_data[0]
-        p_estimator = uncalibrated_p_data[1]
-        p_roc_auc = uncalibrated_p_data[2]
-
-        checked_estimator = check_need_for_calibration(
-            dx_train, dy_train, dx_valid, dy_valid, dx_test, dy_test,
-            p_estimator, p_roc_auc, p_pred_score, ref_pred_score, scoring,
-            n_splits, params, n_iter, cv
-            )
-
-        print()
-        # input("Press key to continue...")
-
-        p = Pipeline([(name, checked_estimator)])
-        vc_top_estimators.append(('p' + str(nr_clf), p))
-
-        nr_clf += 1
-
-    return vc_top_estimators
-
-
 def calibrate_probabilities(
-        estimator, dx_train, dy_train, dx_test, dy_test, method, tuning,
-        models_data, cv, serial=0, labels=None):
-    """Calibrate probabilities of a single estimator."""
-    if method not in ('isotonic', 'sigmoid'):
-        raise ValueError("""
-            %s is not a valid method value for fct 'calibrate_probabilities'.
-            Valid options are ['isotonic', 'sigmoid']""" % method)
-
-    name = ''
-    try:
-        for step in estimator.steps:
-            m = re.search("Clf", step[0])
-    except Exception as e:
-        print(e)
-    else:
-        if m:
-            name = step[0]
-
-    print("[task] === Calibrating predicted probabilities.")
-    print()
-    # It is not advised to use isotonic calibration with too few calibration
-    # samples (<<1000) since it tends to overfit. Use sigmoids (Platt's
-    # calibration) in this case.
-    # methods=[method]
-
-    if len(dy_train) < 100:
-        if method == 'isotonic':
-            methods = ['sigmoid']
-            print("Number of samples '%d' is too small." % len(dy_train))
-            print("""
-            It is not advised to use isotonic calibration
-            with too few calibration samples since it tends to overfit.
-            """)
-            print("Switching to sigmoids (Platt's calibration).")
-
-    elif (len(dy_train) >= 100000 or
-          dx_train.shape[1]*dx_train.shape[0] >= 100000):
-        print("Too many samples or too much data, using isotonic calibration.")
-        if method != 'isotonic':
-            methods = ['isotonic']
-    else:
-        methods = [method]
-
-        try:
-            if method == 'sigmoid':
-                methods.append('isotonic')
-            else:
-                methods.append('sigmoid')
-        except Exception as e:
-            print(e)
-
-    best_calib_score = 100.
-    # best_roc_auc = 0.5
-    best_calib_estimator = estimator
-    best_method = ''
-
-    if serial:
-        print()
-        print("serial nr before calibration: ", serial)
-        print()
-    else:
-        print("no serial nr found, let's set one...")
-        serial = "%04d" % randint(0, 1000)
-        print("serial nr now: ", serial)
-
-    dy_type = mc.type_of_target(dy_test)
-
-    for mtd in methods:
-        calib_clf = CalibratedClassifierCV(estimator, method=mtd, cv=cv)
-
-        t0 = time()
-        calib_clf.fit(dx_train, dy_train)
-        t1 = time()
-
-        wtr = calculate_sample_weight(dy_train)
-        w_score = calib_clf.score(dx_train, dy_train, sample_weight=wtr)*100
-
-        print("Execution time after '%s' 'CCCV': %.2fs." % (mtd, t1 - t0))
-        predicted = calib_clf.predict(dx_test)
-
-        # print("predicted:\n", predicted_probas[0:3])
-
-        print("=== Predictions after calibration for '%s'" % name)
-        print("predictions:\n", predicted[0:3])
-        # print("predicted probabilities:\n", predicted_probas[0:3])
-        print("=== Calibration performance for '%s'" % name)
-        prediction_score = best_calib_score
-
-        if dy_type == 'binary':
-
-            # consider label '0' --> 'dead'; label '1' --> 'survived'
-            predicted_probas = np.array(calib_clf.predict_proba(dx_test))
-            y_prob = []
-            # consider label '0' --> 'dead'; label '1' --> 'survived'
-            for probas in predicted_probas:
-                y_prob.append(probas[1])
-
-            clabel = 1
-            print("predicted probabilities for class %d:\n"
-                  % clabel, y_prob[0:3])
-            bsl_score = brier_score_loss(dy_test, y_prob, pos_label=clabel)
-            print("Brier score: %1.3f" % bsl_score)
-            print("=== '%s''s classification performance" % name)
-            # acc_from_predictions = accuracy_score(dy_test, predicted)*100
-            roc_auc_fom_preds = roc_auc_score(dy_test, y_prob)*100
-            # score retreived from train data, likely more reliable than
-            # from valid (calib)
-            print("""ROC AUC %1.3f computed w metrics.roc_auc_score() on test
-            data and predictions""" % roc_auc_fom_preds)
-
-            msg = "*** Best Brier scor loss: "
-            prediction_score = bsl_score
-
-        else:
-            y_prob = np.array(calib_clf.predict_proba(dx_test))
-            print("Predicted probabilities:\n", y_prob[0:3])
-
-            ll_score = log_loss(dy_test, y_prob, labels=labels)
-            print("log loss for '%s': %1.3f" % (name, ll_score))
-
-            msg = "*** Best log loss score: "
-            prediction_score = ll_score
-
-        print("=== '%s''s accuracy of predictions" % name)
-        w = calculate_sample_weight(dy_test)
-
-        weighted_acc_from_predictions = accuracy_score(
-            dy_test, predicted, sample_weight=w)*100
-
-        print("Accuracy %.2f%% computed with .score() on train data"
-              % (w_score))
-        print("Accuracy %.2f%% computed w metrics.accuracy_score() on "
-              "test data and predictions" % weighted_acc_from_predictions)
-
-        if prediction_score < best_calib_score:
-            best_calib_score = prediction_score
-            if dy_type == 'binary':
-                best_calib_roc_auc = roc_auc_fom_preds
-            best_calib_estimator = calib_clf
-            best_method = mtd
-            print(msg + "%1.3f, best method: %s"
-                  % (best_calib_score, best_method))
-
-        print()
-
-        got_preds = 0
-        try:
-            models_data.append(
-                (name + '_nofinal_calib_' + tuning + '_' + mtd
-                 + '_' + serial, y_prob, predicted))
-            got_preds = 1
-        except Exception as e:
-            print(e)
-        finally:
-            if got_preds == 1:
-                pass
-            else:
-                print("Failed to add predictions to models_data")
-
-    print()
-
-    calib_est_data = ()
-
-    if dy_type == 'binary':
-        calib_est_data = best_calib_score, best_calib_estimator, best_calib_roc_auc
-    else:
-        calib_est_data = best_calib_score, best_calib_estimator
-
-    return calib_est_data
-
-
-def calibrate_probabilities_prod(
         estimator, dx_train, dy_train, dx_test, dy_test, method, tuning,
         models_data, cv, labels, serial=0):
     """Calibrate probabilities of 'estimator'."""
@@ -1807,7 +1475,8 @@ def compare_models_performance(
         if name in (
                 'baseline_nn_default_Clf_2nd',
                 'baseline_nn_smaller_Clf_2nd', 'larger_nn_Clf_2nd',
-                'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+                'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+                'deeper_nn_Clf_2nd', 'KerasClf_2nd'):
             best_nn_build_fn = model.get_params()['build_fn']
         else:
             best_nn_build_fn = None
@@ -1943,10 +1612,7 @@ def single_classic_cv_evaluation(
                 random_state=random_state)
             model = bagging
         else:
-            # model = SVC(
-            #     C=.01, gamma=.1, kernel='poly', degree=3, coef0=10.,
-            #     probability=True, class_weight='balanced',
-            #     random_state=random_state)
+
             pass
         print("model:", model)
     else:
@@ -2098,10 +1764,7 @@ def single_nested_rscv_evaluation(
     print("Best model: '%s'. Best score: %1.3f (%1.3f)"
           % (best_model_name, best_score, best_score_dev))
 
-    if name not in (
-           'DummyClf_2nd', 'GaussianNBClf_2nd', 'baseline_nn_default_Clf_2nd',
-           'baseline_nn_smaller_Clf_2nd', 'larger_nn_Clf_2nd',
-           'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+    if name != 'DummyClf_2nd':
 
         steps = []
         # ...

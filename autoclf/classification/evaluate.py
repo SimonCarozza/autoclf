@@ -6,12 +6,12 @@ This module contains a function to select a strategy for models evaluation.
 """
 
 from sklearn.ensemble import BaggingClassifier
-from sklearn.ensemble import VotingClassifier
 from . import param_grids_distros as pgd
 from . import neuralnets as nn
 from operator import itemgetter
 
 import numpy as np
+from scipy.stats import randint as sp_randint
 from .. import auto_utils as au
 from . import train_calibrate as tc
 
@@ -28,6 +28,161 @@ sys.stderr = open(os.devnull, 'w')
 from keras.wrappers.scikit_learn import KerasClassifier
 sys.stderr = stderr
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import warnings
+warnings.filterwarnings("ignore")
+
+
+def create_keras_classifiers(
+    y_type, input_dim, output_dim, labels, nb_epoch, batch_size):
+
+    keras_clf_fcts = dict(
+            baseline_nn_default_Clf_2nd=(
+                nn.baseline_nn_model_multiclass, nn.baseline_nn_model),
+            baseline_nn_smaller_Clf_2nd=(
+                nn.baseline_nn_smaller_model_multiclass, nn.baseline_nn_smaller_model),
+            larger_nn_Clf_2nd=(nn.larger_nn_model_multiclass, nn.larger_nn_model),
+            deep_nn_Clf_2nd=(nn.deep_nn_model_multiclass, nn.deep_nn_model),
+            deeper_nn_Clf_2nd=(nn.deeper_nn_model_multiclass, nn.deeper_nn_model)
+            )
+
+    if input_dim < 15:
+            keras_clf_fcts['larger_deep_nn_Clf_2nd'] = (
+                nn.larger_deep_nn_model_multiclass, nn.larger_deep_nn_model)
+
+    names_and_models=dict()
+
+    if y_type == 'multiclass':
+
+        if labels is None:
+            raise ValueError("%r is not a valid type for var 'labels'" % labels)
+        elif not isinstance(labels, list):
+            raise TypeError("Multiclass keras models need a list of string labels.")
+        else:
+            output_dim = len(labels)
+
+        for k, v in keras_clf_fcts.items():
+            names_and_models[k] = KerasClassifier(
+            build_fn=v[0], nb_epoch=nb_epoch,
+            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size,
+            verbose=0)
+
+    else:
+
+        for k, v in keras_clf_fcts.items():
+            names_and_models[k] = KerasClassifier(
+            build_fn=v[1], nb_epoch=nb_epoch,
+            input_dim=input_dim, batch_size=batch_size,
+            verbose=0)
+
+    return names_and_models
+
+
+def create_best_keras_clf_architecture(
+        keras_clf_name, y_type, labels, input_dim, output_dim, nb_epoch, 
+        keras_param_grid):
+    """
+    Find KerasClf best architecture using
+
+    ------
+    """
+
+    for n in np.arange(0, 3):
+        keras_param_grid[keras_clf_name + '__units_' + str(n)] = sp_randint(
+            input_dim, 5*input_dim)
+
+    if y_type == 'multiclass':
+
+        if labels is None:
+            raise ValueError("%r is not a valid type for var 'labels'" % labels)
+        elif not isinstance(labels, list):
+            raise TypeError("Multiclass keras models need a list of string labels.")
+        else:
+            output_dim = len(labels)
+
+        keras_nn_model = KerasClassifier(
+            build_fn=nn.tunable_deep_nn_multiclass, nb_epoch=nb_epoch,
+            input_dim=input_dim, output_dim=output_dim,
+            verbose=0)
+
+    else:
+
+        # you need KerasClassifier wrapper to use Keras models in sklearn
+
+        keras_nn_model = KerasClassifier(
+            build_fn=nn.tunable_deep_nn, nb_epoch=nb_epoch,
+            input_dim=input_dim, verbose=0)
+
+    return (keras_nn_model, keras_param_grid)
+
+
+def models_and_params_for_classic_cv_tasks(y_type, scoring, labels):
+    models_and_params = dict()
+
+    if y_type == 'binary':
+        models_and_params = pgd.starting_point_models_and_params
+        # models_and_params['LogRClf_2nd'].set_params(
+        #     solver='liblinear')
+
+    else:
+        # if y_type == 'multiclass':
+
+        if scoring == 'neg_log_loss':               
+            for k, v in pgd.starting_point_models_and_params.items():
+                if hasattr(v, 'predict_proba'):
+                    print(k)
+                    models_and_params[k] = v
+
+            # solver='saga', penalty='l1'
+            # models_and_params['LogRClf_2nd'].set_params(
+            #     solver='lbfgs', penalty='l2', multi_class='multinomial')
+
+        # RandomForestClf better suited to handle lot of categories
+        if labels is not None and len(labels) > 10:
+            del models_and_params['GBoostingClf_2nd']
+
+    return models_and_params
+
+
+def models_and_params_for_nested_cv_tasks(y_type, scoring, labels):
+    models_and_params = dict()
+
+    if y_type == 'binary':
+            models_and_params = pgd.full_search_models_and_parameters
+            models_and_params['LogRClf_2nd'][0].set_params(solver='liblinear')
+
+    else:
+        # y_type == 'multiclass'
+
+        if scoring == 'neg_log_loss':
+            models_and_params = dict()
+
+            for k, v in pgd.full_search_models_and_parameters.items():
+                if hasattr(v[0], 'predict_proba'):
+                    models_and_params[k] = v
+
+            # solver='saga', penalty='l1'
+            models_and_params['LogRClf_2nd'][0].set_params(
+                solver='lbfgs', penalty='l2', multi_class='multinomial')
+
+        # RandomForestClf better suited to handle lot of categories
+        if labels is not None and len(labels) > 10:
+            del models_and_params['GBoostingClf_2nd']
+
+    return models_and_params
+
+
+def create_ensemble_of_best_models(best_model_name, best_model_estim, seed=0):
+    base_estimator_name = best_model_name.strip('_2nd')
+    bagging_estimator_name = 'BaggingClf_2nd_' + base_estimator_name
+
+    bagging_param_grid = {
+        bagging_estimator_name + '__'
+        + k: v for k, v in pgd.Bagging_param_grid.items()
+        }
+    bagging = BaggingClassifier(best_model_estim, random_state=seed)
+
+    return bagging, bagging_estimator_name, bagging_param_grid
 
 
 def perform_classic_cv_evaluation_and_calibration(
@@ -159,29 +314,8 @@ def perform_classic_cv_evaluation_and_calibration(
 
     # this holds for regression as well, not time-series
 
-    models_and_parameters = dict()
-
-    if Y_type == 'binary':
-        models_and_parameters = pgd.starting_point_models_and_params
-        # models_and_parameters['LogRClf_2nd'].set_params(
-        #     solver='liblinear')
-
-    else:
-        # if Y_type == 'multiclass':
-
-        if scoring == 'neg_log_loss':               
-            for k, v in pgd.starting_point_models_and_params.items():
-                if hasattr(v, 'predict_proba'):
-                    print(k)
-                    models_and_parameters[k] = v
-
-            # solver='saga', penalty='l1'
-            # models_and_parameters['LogRClf_2nd'].set_params(
-            #     solver='lbfgs', penalty='l2', multi_class='multinomial')
-
-        # RandomForestClf better suited to handle lot of categories
-        if len(labels) > 10:
-            del models_and_parameters['GBoostingClf_2nd']
+    models_and_parameters = models_and_params_for_classic_cv_tasks(
+        Y_type, scoring, labels)
 
     average_scores_and_best_scores = eu.classic_cv_model_evaluation(
         X_train_transformed, y_train, models_and_parameters,
@@ -207,21 +341,24 @@ def perform_classic_cv_evaluation_and_calibration(
 
     best_model_name = scores_of_best_model[4][0]
     best_model_estim = scores_of_best_model[4][1]
-    # no need to define a Keras build function here
-    # best_nn_build_fn = scores_of_best_model[4][2]
+
     best_score = scores_of_best_model[0]
     best_score_dev = scores_of_best_model[1]
-    # best_brier_score = scores_of_best_model[2]
     best_cv_results = scores_of_best_model[2]
+    # best_brier_score = scores_of_best_model[2]
     best_exec_time = scores_of_best_model[3]
 
+    Dummy_score = Dummy_scores[0]
+    Dummy_score_dev = Dummy_scores[1]
+    Dummy_cv_results = Dummy_scores[2]
+    # Dummy_brier_score = Dummy_scores[3]
+    Dummy_exec_time = Dummy_scores[3]
+
     print()
-    print("Currently, best model is '%s' with score '%s': %1.3f (%1.3f)... :"
-          % (best_model_name, scoring.strip('neg_'), best_score,
-             best_score_dev))
+    print("Currently, best model is '%s' with score '%s': %1.3f (%1.3f)... :" %
+          (best_model_name, scoring.strip('neg_'), best_score, best_score_dev))
     print("... execution time: %.2fs" % best_exec_time)
     # print("and prediction confidence: %1.3f" % best_brier_score)
-    print()
     print()
 
     print("=== Classic CV to evaluate more complex models")
@@ -251,106 +388,11 @@ def perform_classic_cv_evaluation_and_calibration(
 
     batch_size = 32
 
-    if Y_type == 'multiclass':
+    kclf_names_and_models = create_keras_classifiers(
+        Y_type, input_dim, output_dim, labels, nb_epoch, batch_size)
 
-        output_dim = len(labels)
-
-        baseline_nn_default = KerasClassifier(
-            build_fn=nn.baseline_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size,
-            verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_default_Clf_2nd'] = baseline_nn_default
-
-        # build smaller layer
-
-        baseline_nn_smaller = KerasClassifier(
-            build_fn=nn.baseline_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size,
-            verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_smaller_Clf_2nd'] = baseline_nn_smaller
-
-        # build larger layer
-
-        larger_nn = KerasClassifier(
-            build_fn=nn.larger_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size,
-            verbose=0
-            )
-
-        complex_models_and_parameters['larger_nn_Clf_2nd'] = larger_nn
-
-        # shallow deep nn
-
-        small_deep_nn = KerasClassifier(
-            build_fn=nn.deep_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size,
-            verbose=0
-            )
-
-        complex_models_and_parameters['deep_nn_Clf_2nd'] = small_deep_nn
-
-        # deeper deep nn
-
-        if input_dim < 15:
-            deep_nn = KerasClassifier(
-                build_fn=nn.deeper_nn_model_multilabel, nb_epoch=nb_epoch,
-                input_dim=input_dim, output_dim=output_dim,
-                batch_size=batch_size, verbose=0
-                )
-
-            complex_models_and_parameters['deeper_nn_Clf_2nd'] = deep_nn
-
-    else:
-
-        # you could grid search nn_model's parameters space using hyperas...
-        # you need KerasClassifier wrapper to use Keras models in sklearn
-
-        baseline_nn_default = KerasClassifier(
-            build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_default_Clf_2nd'] = baseline_nn_default
-
-        # build smaller layer
-
-        baseline_nn_smaller = KerasClassifier(
-            build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_smaller_Clf_2nd'] = baseline_nn_smaller
-
-        # build larger layer
-
-        larger_nn = KerasClassifier(
-            build_fn=nn.larger_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['larger_nn_Clf_2nd'] = larger_nn
-
-        # shallow deep nn
-
-        small_deep_nn = KerasClassifier(
-            build_fn=nn.deep_nn_model, nb_epoch=nb_epoch, input_dim=input_dim,
-            batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deep_nn_Clf_2nd'] = small_deep_nn
-
-        # deeper deep nn
-
-        deep_nn = KerasClassifier(
-            build_fn=nn.deeper_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deeper_nn_Clf_2nd'] = deep_nn
+    for k, v in kclf_names_and_models.items():
+        complex_models_and_parameters[k] = v
 
     average_scores_and_best_scores = eu.classic_cv_model_evaluation(
         X_train_transformed, y_train, complex_models_and_parameters, scoring,
@@ -382,18 +424,6 @@ def perform_classic_cv_evaluation_and_calibration(
     # Dummy_brier_score = Dummy_scores[3]
     Dummy_exec_time = Dummy_scores[3]
 
-    print()
-    print("Currently, best model is '%s' with score '%s': %1.3f (%1.3f)... :" %
-          (best_model_name, scoring.strip('neg_'), best_score, best_score_dev))
-    if best_model_name in (
-            'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
-        best_nn_build_fn = scores_of_best_model[4][2]
-        print("Best build function:", best_nn_build_fn)
-    print("... execution time: %.2fs" % best_exec_time)
-    # print("and prediction confidence: %1.3f" % best_brier_score)
-    print()
-
     if best_model_name != 'DummyClf_2nd':
         # It's assumed best model's performance is
         # satistically better than that of DummyClf on this dataset
@@ -404,13 +434,15 @@ def perform_classic_cv_evaluation_and_calibration(
             print("'%s' is quicker than DummyClf." % best_model_name)
         print()
         print()
-        # input("Press key to continue...")
 
         preprocessing = (encoding, scaler_tuple, featselector)
 
         if labels is not None:
-            print("You have labels:", labels)
-            all_models_and_parameters['labels'] = labels
+            if not isinstance(labels, list):
+                raise TypeError("Multiclass models need a list of string labels.")
+            else:
+                print("You have labels:", labels)
+                all_models_and_parameters['labels'] = labels
 
         print("Defined dictionary with models, parameters and related data.")
         print()
@@ -460,6 +492,7 @@ def perform_nested_cv_evaluation_and_calibration(
     print("RSCV.refit=False")
     print("pipe.fit(train_data)")
 
+    # each one of these items need a check
     encoding = auto_feat_eng_data['encoding']
     scaler_tuple = auto_feat_eng_data['scaler']
     featselector = auto_feat_eng_data['feat_selector']
@@ -564,28 +597,8 @@ def perform_nested_cv_evaluation_and_calibration(
     # update models_and_params dict according
     # to learning mode 'quick', 'standard', 'hard'
 
-    if Y_type == 'binary':
-        models_and_parameters = pgd.full_search_models_and_parameters
-        models_and_parameters['LogRClf_2nd'][0].set_params(
-            solver='liblinear')
-
-    else:
-        # Y_type == 'multiclass'
-
-        if nested_cv_scoring == 'neg_log_loss':
-            models_and_parameters = dict()
-
-            for k, v in pgd.full_search_models_and_parameters.items():
-                if hasattr(v[0], 'predict_proba'):
-                    models_and_parameters[k] = v
-
-            # solver='saga', penalty='l1'
-            models_and_parameters['LogRClf_2nd'][0].set_params(
-                solver='lbfgs', penalty='l2', multi_class='multinomial')
-
-        # RandomForestClf better suited to handle lot of categories
-        if len(labels) > 10:
-            del models_and_parameters['GBoostingClf_2nd']
+    models_and_parameters = models_and_params_for_nested_cv_tasks(
+        Y_type, nested_cv_scoring, labels)
 
     average_scores_and_best_scores = eu.nested_rscv_model_evaluation(
             X_train_transformed, y_train, models_and_parameters,
@@ -635,8 +648,11 @@ def perform_nested_cv_evaluation_and_calibration(
     all_models_and_parameters = models_and_parameters
 
     if labels is not None:
-        print("You have labels:", labels)
-        all_models_and_parameters['labels'] = labels
+        if not isinstance(labels, list):
+            raise TypeError("Multiclass models need a list of string labels.")
+        else:
+            print("You have labels:", labels)
+            all_models_and_parameters['labels'] = labels
 
     print("Defined dictionary with models, parameters and related data.")
     print()
@@ -661,158 +677,18 @@ def perform_nested_cv_evaluation_and_calibration(
         # ...
         # steps.append(('feature_union', feature_union))
 
-        base_estimator = best_model_estim
-        base_estimator_name = best_model_name.strip('_2nd')
-        bagging_estimator_name = 'BaggingClf_2nd_' + base_estimator_name
-
-        bagging_param_grid = {
-            bagging_estimator_name + '__'
-            + k: v for k, v in pgd.Bagging_param_grid.items()
-            }
-        bagging = BaggingClassifier(base_estimator, random_state=random_state)
+        bag_estim, bag_estim_name, bag_param_grid = create_ensemble_of_best_models(
+            best_model_name, best_model_estim, random_state)
 
         # add bagging to dictionary of complex models
 
-        complex_models_and_parameters[bagging_estimator_name] = (
-            bagging, bagging_param_grid
+        complex_models_and_parameters[bag_estim_name] = (
+            bag_estim, bag_param_grid
             )
 
-        all_models_and_parameters[bagging_estimator_name] = (
-            bagging, bagging_param_grid
+        all_models_and_parameters[bag_estim_name] = (
+            bag_estim, bag_param_grid
             )
-
-    # Compare to VotingClassifier
-
-    print("=== [task] Comparing best model to VotingClassifier "
-          "taking top 3 models.")
-    print()
-
-    # average_scores_across_outer_folds[name] = (
-    #     score, score_dev, exec_time, model, params)
-
-    # dictionary of top 3 classifiers having 'predict_proba' attribute
-
-    candidate_estimators_for_vc3 = dict()
-
-    for k, v in average_scores_across_outer_folds_for_each_model.items():
-        if hasattr(v[3], 'predict_proba'):
-            candidate_estimators_for_vc3[k] = v
-            print("Model '%s' [%1.3f (%1.3f)] has attribute 'predict_proba'."
-                  % (k, v[0], v[1]))
-
-    print()
-
-    if 'Bagging_SVMClf_2nd' in candidate_estimators_for_vc3:
-        # this is gonna slow or break evaluation of VotingClf
-        del candidate_estimators_for_vc3['Bagging_SVMClf_2nd']
-
-    if nested_cv_scoring not in ('neg_log_loss', 'brier_score_loss'):
-        reverse = True
-    else:
-        reverse = False
-
-    candidate_estimators_for_vc3 = sorted(
-        candidate_estimators_for_vc3.items(),
-        key=itemgetter(1), reverse=reverse
-        )
-
-    print()
-    print("Candidate estimators for VotingClf3")
-    print(candidate_estimators_for_vc3)
-
-    # you should sort based on brier -- the lower, the better
-    top_3_models_data = dict(
-        # sort based on score: key=itemgetter(1)
-        sorted(candidate_estimators_for_vc3, key=itemgetter(1))[:3]
-        )
-
-    vc3_estimator_name = 'VClf_3_2nd'
-    vc3_estimators = []
-
-    if len(top_3_models_data) == 3:
-
-        # merge top 3 models param dictionaries
-
-        all_models_and_parameters[vc3_estimator_name] = (
-            top_3_models_data, dict()
-            )
-
-        nr_clf = 1
-        for k, v in top_3_models_data.items():
-            print("Estimator nr. %d: %s" % (nr_clf, k))
-            p = Pipeline([(k, v[3])])
-            vc3_estimators.append(('p' + str(nr_clf), p))
-            nr_clf += 1
-
-        # print("VClf3 estimators -- top 3 models':", vc3_estimators)
-        # print()
-
-        list_of_params = [v[4] for k, v in top_3_models_data.items()]
-
-    else:
-        print()
-        print("Could not retrieve 3 estimators for VotingClassifier.")
-        print("Using fixed pools of pre-determined estimators.")
-        print()
-
-        vc3_estimators_data = dict()
-
-        vc3_estimators_data['LogRClf_2nd'] = (
-            models_and_parameters['LogRClf_2nd'][0],
-                models_and_parameters['LogRClf_2nd'][1])
-
-        vc3_estimators_data['GaussianNBClf_2nd'] = (
-            models_and_parameters['GaussianNBClf_2nd'][0],
-                models_and_parameters['GaussianNBClf_2nd'][1])
-
-        vc3_estimators_data['RandomForestClf_2nd'] = (
-            models_and_parameters['RandomForestClf_2nd'][0],
-                models_and_parameters['RandomForestClf_2nd'][1])
-
-        all_models_and_parameters[vc3_estimator_name] = (
-            vc3_estimators_data, dict()
-            )
-
-        print("vc3_estimators_data:\n", vc3_estimators_data)
-
-        nr_clf = 1
-        for k, v in vc3_estimators_data.items():
-            print("Estimator nr. %d: %s" % (nr_clf, k))
-            p = Pipeline([(k, v[0])])
-            vc3_estimators.append(('p' + str(nr_clf), p))
-            nr_clf += 1
-
-        list_of_params = [v[1] for k, v in vc3_estimators_data.items()]
-
-    print("List of VClf3 params:", list_of_params)
-    print()
-    # input("Press any key to continue...")
-
-    vc3_params = dict()
-
-    nr_clf = 1
-    for par in list_of_params:
-        new_par = {vc3_estimator_name + '__p' + str(nr_clf)
-                   + '__' + k: v for k, v in par.items()}
-        vc3_params.update(new_par)
-        nr_clf += 1
-
-    vc3_param_grid = {
-        vc3_estimator_name + '__'
-        + k: v for k, v in pgd.VC_3_param_grid.items()}
-
-    vc3_params.update(vc3_param_grid)
-
-    # print("Dict of VClf3 params:", vc3_params)
-
-    # top 3 estimators here should be well calibrated
-    vclf3 = VotingClassifier(vc3_estimators, voting='soft')
-
-    # add votingclf of top 3 to dictionary of complex models
-
-    complex_models_and_parameters[vc3_estimator_name] = (vclf3, vc3_params)
-
-    print()
 
     # Let's add some simple neural network
 
@@ -821,118 +697,20 @@ def perform_nested_cv_evaluation_and_calibration(
     print()
 
     input_dim = int(X_train_transformed.shape[1])
+    output_dim = 1
     if not followup:
         nb_epoch = au.select_nr_of_iterations('nn')
     else:
         nb_epoch = au.select_nr_of_iterations('nn', followup)
 
-    batch_size = 32
+    keras_clf_name = "KerasClf_2nd"
 
-    if Y_type == 'multiclass':
+    keras_nn_model, keras_param_grid = create_best_keras_clf_architecture(
+        keras_clf_name, Y_type, labels, input_dim, output_dim, nb_epoch, 
+        pgd.Keras_param_grid)
 
-        output_dim = len(labels)
-
-        baseline_nn_default = KerasClassifier(
-            build_fn=nn.baseline_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim,
-            batch_size=batch_size,
-            verbose=0
-        )
-
-        complex_models_and_parameters['baseline_nn_default_Clf_2nd'] = (
-            baseline_nn_default, dict())
-
-        # build smaller layer
-
-        baseline_nn_smaller = KerasClassifier(
-            build_fn=nn.baseline_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim,
-            batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_smaller_Clf_2nd'] = (
-            baseline_nn_smaller, dict())
-
-        # build larger layer
-
-        larger_nn = KerasClassifier(
-            build_fn=nn.larger_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['larger_nn_Clf_2nd'] = (
-            larger_nn, dict())
-
-        # shallow deep nn
-
-        small_deep_nn = KerasClassifier(
-            build_fn=nn.deep_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deep_nn_Clf_2nd'] = (
-            small_deep_nn, dict())
-
-        # deeper deep nn
-
-        deep_nn = KerasClassifier(
-            build_fn=nn.deeper_nn_model_multilabel, nb_epoch=nb_epoch,
-            input_dim=input_dim, output_dim=output_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deeper_nn_Clf_2nd'] = (deep_nn, dict())
-
-    else:
-
-        # you could grid search nn_model's parameters space using hyperas...
-        # you need KerasClassifier wrapper to use Keras models in sklearn
-
-        baseline_nn_default = KerasClassifier(
-            build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_default_Clf_2nd'] = (
-            baseline_nn_default, dict())
-
-        # build smaller layer
-
-        baseline_nn_smaller = KerasClassifier(
-            build_fn=nn.baseline_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['baseline_nn_smaller_Clf_2nd'] = (
-            baseline_nn_smaller, dict())
-
-        # build larger layer
-
-        larger_nn = KerasClassifier(
-            build_fn=nn.larger_nn_model, nb_epoch=nb_epoch,
-            input_dim=input_dim, batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['larger_nn_Clf_2nd'] = (
-            larger_nn, dict())
-
-        # shallow deep nn
-
-        small_deep_nn = KerasClassifier(
-            build_fn=nn.deep_nn_model, nb_epoch=nb_epoch, input_dim=input_dim,
-            batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deep_nn_Clf_2nd'] = (
-            small_deep_nn, dict())
-
-        # deeper deep nn
-
-        deep_nn = KerasClassifier(
-            build_fn=nn.deeper_nn_model, nb_epoch=nb_epoch, input_dim=input_dim,
-            batch_size=batch_size, verbose=0
-            )
-
-        complex_models_and_parameters['deeper_nn_Clf_2nd'] = (deep_nn, dict())
+    complex_models_and_parameters[keras_clf_name] = (
+        keras_nn_model, keras_param_grid)
 
     # Feed nested-cv function with dictionary of models and their params
 
@@ -968,9 +746,7 @@ def perform_nested_cv_evaluation_and_calibration(
 
     print("Currently, best model is '%s' with score '%s': %1.3f (%1.3f)... :"
           % (best_model_name, nested_cv_scoring, best_score, best_score_dev))
-    if best_model_name in (
-        'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+    if best_model_name == keras_clf_name:
         best_nn_build_fn = scores_of_best_model[4][2]
         print("Best build function:", best_nn_build_fn)
     print("... execution time: %.2fs" % best_exec_time)

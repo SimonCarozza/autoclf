@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 from autoclf import auto_utils as au
-from autoclf.classification import eval_helpers as eh
+from autoclf.classification import eval_utils as eu
 from autoclf.classification import evaluate as ev
 from autoclf.encoding import labelenc as lc
 import autoclf.getargs as ga

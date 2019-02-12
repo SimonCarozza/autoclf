@@ -8,13 +8,12 @@ the best estimator returned by the non-nested cv evaluation.
 
 """
 
-from sklearn.ensemble import VotingClassifier
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.externals.joblib.my_exceptions import JoblibValueError
 
 import numpy as np
 import re
 from random import randint
+from scipy.stats import randint as sp_randint
 import matplotlib.pyplot as plt
 
 from . import param_grids_distros as pgd
@@ -36,7 +35,80 @@ from keras.wrappers.scikit_learn import KerasClassifier
 sys.stderr = stderr
 
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
+
+
+def confusion_matrix_and_clf_report(y_type, model_name, y_test, y_pred):
+    if y_type == 'binary':
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+        print()
+        print("Test errors for '%s'" % model_name)
+        print("\ttrue negatives: %d" % tn)
+        print("\tfalse positives: %d" % fp)
+        print("\tfalse negatives: %d" % fn)
+        print("\ttrue positives: %d" % tp)
+    else:
+        print()
+        print("Confusion matrix for '%s'.\n"
+                % model_name, confusion_matrix(y_test, y_pred))
+        print()
+    print("Classification report for '%s'\n"
+            % model_name, classification_report(y_test, y_pred))
+
+
+def check_model_hasroc(model_name, model_data):
+
+    has_roc = 0
+    try:
+        model_data[2]
+    except IndexError:
+        print("ROC_AUC score is not available.")
+        roc_auc = None
+    except Exception as e:
+        print(e)
+    else:
+        roc_auc = model_data[2]
+        has_roc = 1
+    finally:
+        print(
+            "We have %s data to compare prediction confidence of models." 
+            % model_name)
+        if has_roc:
+            print("ROC_AUC included.")
+
+    return has_roc, roc_auc
+
+
+def logreg_calibration_reference(y_type, scoring, models_params):
+    lr = None
+    lr_params = None
+
+    if 'LogRClf_2nd' in models_params:
+        lr = models_params['LogRClf_2nd'][0]
+        if y_type == 'binary':
+            lr.set_params(solver='liblinear')
+        else:
+            # y_type == 'multiclass'
+            if scoring == 'neg_log_loss':
+                lr.set_params(
+                    solver='lbfgs', penalty='l2', multi_class='multinomial')
+        lr_params = models_params['LogRClf_2nd'][1]
+    else:
+        if y_type == 'binary':
+            lr =\
+            pgd.full_search_models_and_parameters['LogRClf_2nd'][0].set_params(
+                solver='liblinear')
+            lr_params = pgd.full_search_models_and_parameters['LogRClf_2nd'][1]
+        else:
+            # y_type == 'multiclass'
+            if scoring == 'neg_log_loss':
+                # solver='saga', penalty='l1'
+                lr =\
+                pgd.full_search_models_and_parameters['LogRClf_2nd'][0].set_params(
+                    solver='lbfgs', penalty='l2', multi_class='multinomial')
+                lr_params = pgd.full_search_models_and_parameters['LogRClf_2nd'][1]
+
+    return lr, lr_params
 
 
 def calibrate_best_model(
@@ -55,7 +127,8 @@ def calibrate_best_model(
     best_model_estim = scores_of_best_model[4][1]
     if best_model_name in (
         'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+            'deeper_nn_Clf_2nd'):
         best_nn_build_fn = scores_of_best_model[4][2]
     best_score = scores_of_best_model[0]
     best_score_dev = scores_of_best_model[1]
@@ -72,13 +145,13 @@ def calibrate_best_model(
 
     encoding, scaler_tuple, featselector = preprocessing
 
-    classes = None
+    labels = None
 
     if 'labels' in all_models_and_parameters:
-        classes = all_models_and_parameters['labels']
+        labels = all_models_and_parameters['labels']
         print("Checking prediction confidence of multiclass '%s'"
               % best_model_name)
-        output_dim = len(classes)
+        output_dim = len(labels)
     else:
         print("No list of labels here. It's a binary problem.")
 
@@ -106,7 +179,8 @@ def calibrate_best_model(
     steps_fin.append(featselector)
     if best_model_name not in (
         'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+            'deeper_nn_Clf_2nd'):
         steps_fin.append((best_model_name, best_model_estim))
     final_pipeline = Pipeline(steps_fin)
 
@@ -118,9 +192,6 @@ def calibrate_best_model(
     print()
     print("======= Training best estimator [%s], checking predicted "
           "probabilities and calibrating them" % best_model_name)
-
-    # GaussianNB does not need any tuning
-    # VotingClassification needs no calibration, its estimators might do
 
     # Train LogisticRegression for comparison of predicted probas
 
@@ -146,7 +217,7 @@ def calibrate_best_model(
     # check predicted probabilities for prediction confidence
     uncalibrated_lr_data = eu.probability_confidence_before_calibration(
         temp_pipeline, X_train, y_train, X_test, y_test, tuning_method,
-        models_data, classes, serial
+        models_data, labels, serial
         )
 
     del temp_pipeline
@@ -154,43 +225,14 @@ def calibrate_best_model(
     lr_pred_score = uncalibrated_lr_data[0]
     lr_pipeline = uncalibrated_lr_data[1]
 
-    has_roc = 0
-    try:
-        uncalibrated_lr_data[2]
-    except IndexError:
-        print("ROC_AUC score is not available.")
-    except Exception as e:
-        print(e)
-    else:
-        lr_roc_auc = uncalibrated_lr_data[2]
-        has_roc = 1
-    finally:
-        print("""
-        We have LogRegression reference data
-        to compare prediction confidence of models.
-        """)
-        if has_roc:
-            print("ROC_AUC included.")
+    has_roc, lr_roc_auc = check_model_hasroc(
+        "LogRegression reference", uncalibrated_lr_data)
+
     print()
 
     predicted = lr_pipeline.predict(X_test)
 
-    # if np.bincount(y_train).size == 2:
-    if Y_type == 'binary':
-        tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-        print()
-        print("Test errors for 'LogRClf_2nd'")
-        print("\ttrue negatives: %d" % tn)
-        print("\tfalse positives: %d" % fp)
-        print("\tfalse negatives: %d" % fn)
-        print("\ttrue positives: %d" % tp)
-    else:
-        print()
-        print("Confusion matrix for 'LogRClf_2nd'.\n",
-              confusion_matrix(y_test, predicted))
-        print()
-    print("Classification report for 'LogRClf_2nd'\n",
-          classification_report(y_test, predicted))
+    confusion_matrix_and_clf_report(Y_type, 'LogRClf_2nd', y_test, predicted)  
     print()
     print()
 
@@ -210,11 +252,12 @@ def calibrate_best_model(
 
     if best_model_name != "LogRClf_2nd":
 
-        # eventually calibrating any ther model != GaussianNB and LogReg
+        # eventually calibrating any ther model != LogReg
 
         if best_model_name in (
            'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-           'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+           'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'larger_deep_nn_Clf_2nd', 
+           'deeper_nn_Clf_2nd'):
 
             # no hyperparam tuning for now
 
@@ -249,82 +292,38 @@ def calibrate_best_model(
             print()
             print("[task] === Plotting a learning curve")
 
-            l_curve = 0
+            au.plot_learning_curve(
+                train_NN_pipeline, X_train, y_train,
+                ylim=y_lim, cv=kfold, scoring=scoring, n_jobs=-2,
+                serial=serial, tuning=tuning_method, d_name=d_name
+                )
 
-            try:
-                au.plot_learning_curve(
-                    train_NN_pipeline, X_train, y_train,
-                    ylim=y_lim, cv=kfold, scoring=scoring, n_jobs=-2,
-                    serial=serial, tuning=tuning_method, d_name=d_name
-                    )
+            # plt.show()
 
-                plt.show()
+            del train_NN_pipeline
 
-                l_curve = 1
+            # train_NN_pipeline = Pipeline(steps)
+            train_NN_pipeline = training_pipeline
 
-                del train_NN_pipeline
-
-                # train_NN_pipeline = Pipeline(steps)
-                train_NN_pipeline = training_pipeline
-
-                print()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
+            print()
 
             # check predicted probabilities for prediction confidence
             NN_data = eu.probability_confidence_before_calibration(
                 train_NN_pipeline, X_train, y_train, X_test, y_test,
-                tuning_method, models_data, classes, serial
+                tuning_method, models_data, labels, serial
                 )
 
             NN_pred_score = NN_data[0]
             NN_pipeline = NN_data[1]
 
-            has_NN_roc = 0
-            try:
-                NN_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                NN_roc_auc = NN_data[2]
-                has_NN_roc = 1
-            finally:
-                print("We have target data to compare prediction confidence "
-                      "of models.")
-                if has_NN_roc:
-                    print("ROC_AUC included.")
+            has_NN_roc, NN_roc_auc = check_model_hasroc(
+                best_model_name, NN_data)
 
             w_NN_acc = NN_pipeline.score(X_test, y_test, sample_weight=w)*100
 
             predicted = NN_pipeline.predict(X_test)
 
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                # true negatives, false positives, false negatives and
-                # true positives for best estimator
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for '%s'.\n" %
-                      best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for '%s'\n" %
-                  best_model_name, classification_report(y_test, predicted))
+            confusion_matrix_and_clf_report(Y_type, best_model_name, y_test, predicted)
             print()
 
             del steps, train_NN_pipeline, best_model_estim
@@ -416,33 +415,19 @@ def calibrate_best_model(
             if Y_type == "binary":
                 y_lim = (0.5, 1.01)
 
-            l_curve = 0
-            try:
-                au.plot_learning_curve(
-                    temp_pipeline, X_train, y_train, ylim=y_lim, cv=n_splits,
-                    scoring=scoring, n_jobs=-2, serial=serial,
-                    tuning=tuning_method, d_name=d_name
-                    )
+            au.plot_learning_curve(
+                temp_pipeline, X_train, y_train, ylim=y_lim, cv=n_splits,
+                scoring=scoring, n_jobs=-2, serial=serial,
+                tuning=tuning_method, d_name=d_name
+                )
 
-                plt.show()
+            # plt.show()
 
-                l_curve = 1
+            del temp_pipeline
 
-                del temp_pipeline
+            temp_pipeline = training_pipeline
 
-                temp_pipeline = training_pipeline
-
-                print()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
+            print()
 
             # tune, etc.
 
@@ -467,50 +452,20 @@ def calibrate_best_model(
             # check predicted probabilities for prediction confidence
             uncalibrated_data = eu.probability_confidence_before_calibration(
                 temp_pipeline, X_train, y_train, X_test, y_test, tuning_method,
-                models_data, classes, serial
+                models_data, labels, serial
                 )
 
             del temp_pipeline
 
             unc_pred_score = uncalibrated_data[0]
             unc_pipeline = uncalibrated_data[1]
-
-            has_unc_roc = 0
-            try:
-                uncalibrated_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                unc_roc_auc = uncalibrated_data[2]
-                has_unc_roc = 1
-            finally:
-                print("We have target data to compare prediction confidence "
-                      "of models.")
-                if has_unc_roc:
-                    print("ROC_AUC included.")
+            
+            has_unc_roc, unc_roc_auc = check_model_hasroc("target", uncalibrated_data)
 
             predicted = unc_pipeline.predict(X_test)
 
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for '%s'.\n"
-                      % best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for '%s'\n"
-                  % best_model_name, classification_report(y_test, predicted))
+            confusion_matrix_and_clf_report(Y_type, best_model_name, y_test, predicted)    
             print()
-
-            # input("Enter key to continue... \n")
             print()
 
             # in case of LogRegression,
@@ -519,8 +474,6 @@ def calibrate_best_model(
             if unc_pred_score < lr_pred_score:
                 print("'%s' is already well calibrated." % best_model_name)
                 print("Let's resume metrics on test data.")
-
-                # w = calculate_sample_weight(y_test)
 
                 w_unc_acc = unc_pipeline.score(X_test, y_test, sample_weight=w)*100
 
@@ -552,27 +505,13 @@ def calibrate_best_model(
                 # In case model needs calibration
                 calib_data = eu.calibrate_probabilities(
                     temp_pipeline, X_train, y_train, X_test, y_test, 'sigmoid',
-                    tuning_method, models_data, kfold, serial
+                    tuning_method, models_data, kfold, labels, serial
                     )
 
                 calib_pred_score = calib_data[0]
                 calib_pipeline = calib_data[1]
 
-                has_calib_roc = 0
-                try:
-                    calib_data[2]
-                except IndexError:
-                    print("ROC_AUC score is not available.")
-                except Exception as e:
-                    print(e)
-                else:
-                    calib_roc_auc = calib_data[2]
-                    has_calib_roc = 1
-                finally:
-                    print("We have target calib data to compare prediction "
-                          "confidence of models.")
-                    if has_roc:
-                        print("ROC_AUC included.")
+                has_calib_roc, calib_roc_auc = check_model_hasroc("target calib", calib_data)
                 print()
 
                 if calib_pred_score >= unc_pred_score:
@@ -616,21 +555,7 @@ def calibrate_best_model(
                     print()
                     print("After probability calibration...")
 
-                    if Y_type == 'binary':
-                        tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                        print()
-                        print("Test errors for '%s'" % best_model_name)
-                        print("\ttrue negatives: %d" % tn)
-                        print("\tfalse positives: %d" % fp)
-                        print("\tfalse negatives: %d" % fn)
-                        print("\ttrue positives: %d" % tp)
-                    else:
-                        print()
-                        print("Confusion matrix for calibrated '%s'.\n"
-                              % best_model_name, confusion_matrix(y_test, predicted))
-                        print()
-                    print("Classification report for calibrated '%s'\n"
-                          % best_model_name, classification_report(y_test, predicted))
+                    confusion_matrix_and_clf_report(Y_type, best_model_name, y_test, predicted) 
                     print()
 
                     w_calib_acc = calib_pipeline.score(
@@ -661,15 +586,12 @@ def calibrate_best_model(
                         + tuning_method + '_' + serial + '.pkl', d_name=d_name
                         )
 
-                    # final
                     # Uncomment to see pipeline, steps and params
-                    """
-                    print("Finalized calibrated best model '%s'." % best_model_name)
-                    params = final_calib_pipeline.get_params()
-                    for param_name in sorted(params.keys()):
-                        print("\t%s: %r" % (param_name, params[param_name]))
-                    print()
-                    """
+                    # print("Finalized calibrated best model '%s'." % best_model_name)
+                    # params = final_calib_pipeline.get_params()
+                    # for param_name in sorted(params.keys()):
+                    #     print("\t%s: %r" % (param_name, params[param_name]))
+                    # print()
 
             if Y_type == 'binary':
                 eu.plot_calibration_curves(
@@ -693,33 +615,17 @@ def calibrate_best_model(
         if Y_type == "binary":
             y_lim = (0.5, 1.01)
 
-        l_curve = 0
-        try:
-            au.plot_learning_curve(
-                lr_pipeline, X_train, y_train, ylim=y_lim,
-                cv=kfold, scoring=scoring, n_jobs=-2, serial=serial,
-                tuning=tuning_method, d_name=d_name
-                )
+        au.plot_learning_curve(
+            lr_pipeline, X_train, y_train, ylim=y_lim,
+            cv=kfold, scoring=scoring, n_jobs=-2, serial=serial,
+            tuning=tuning_method, d_name=d_name
+            )
 
-            plt.show()
+        # plt.show()
 
-            l_curve = 1
+        del lr_pipeline
 
-            del lr_pipeline
-
-            lr_pipeline = uncalibrated_lr_data[1]
-
-            print()
-        except JoblibValueError as jve:
-            print("Not able to complete learning process...")
-        except ValueError as ve:
-            print(ve)
-        except Exception as e:
-            print(e)
-        finally:
-            if not l_curve:
-                print("Sorry. Learning Curve plotting failed.")
-                print()
+        lr_pipeline = uncalibrated_lr_data[1]
 
         print()
         print("'LogRClf_2nd' is already well calibrated for definition!")
@@ -763,10 +669,7 @@ def tune_calibrate_best_model(
     # Here start best model's calibration process
     best_model_name = scores_of_best_model[4][0]
     best_model_estim = scores_of_best_model[4][1]
-    if best_model_name in (
-        'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'
-            ):
+    if best_model_name == "KerasClf_2nd":
         best_nn_build_fn = scores_of_best_model[4][2]
     best_score = scores_of_best_model[0]
     best_score_dev = scores_of_best_model[1]
@@ -777,10 +680,10 @@ def tune_calibrate_best_model(
 
     encoding, scaler_tuple, featselector = preprocessing
 
-    classes = None
+    labels = None
 
     if 'labels' in all_models_and_parameters:
-        classes = all_models_and_parameters['labels']
+        labels = all_models_and_parameters['labels']
         print("Checking prediction confidence of multiclass '%s'"
               % best_model_name)
     else:
@@ -804,9 +707,7 @@ def tune_calibrate_best_model(
     steps_fin = []
     steps_fin.append(scaler_tuple)
     steps_fin.append(featselector)
-    if best_model_name not in (
-        'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-            'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
+    if best_model_name != "KerasClf_2nd":
         steps_fin.append((best_model_name, best_model_estim))
     final_pipeline = Pipeline(steps_fin)
 
@@ -818,9 +719,6 @@ def tune_calibrate_best_model(
     print()
     print("======= Tuning best estimator [%s], checking predicted "
           "probabilities and calibrating them" % best_model_name)
-
-    # GaussianNB does not need any tuning
-    # VotingClassification needs no calibration, its estimators might do
 
     # Train LogisticRegression for comparison of predicted probas
 
@@ -836,39 +734,10 @@ def tune_calibrate_best_model(
 
     # LogisticRegression as a calibration reference
 
-    lr = None
-    lr_params = None
-
-    if 'LogRClf_2nd' in all_models_and_parameters:
-        lr = all_models_and_parameters['LogRClf_2nd'][0]
-        if Y_type == 'binary':
-            lr.set_params(solver='liblinear')
-        else:
-            # Y_type == 'multiclass'
-            if scoring == 'neg_log_loss':
-                lr.set_params(
-                    solver='lbfgs', penalty='l2', multi_class='multinomial')
-        lr_params = all_models_and_parameters['LogRClf_2nd'][1]
-    else:
-        if Y_type == 'binary':
-            lr =\
-            pgd.full_search_models_and_parameters['LogRClf_2nd'][0].set_params(
-                solver='liblinear')
-            lr_params = pgd.full_search_models_and_parameters['LogRClf_2nd'][1]
-        else:
-            # Y_type == 'multiclass'
-            if scoring == 'neg_log_loss':
-                # solver='saga', penalty='l1'
-                lr =\
-                pgd.full_search_models_and_parameters['LogRClf_2nd'][0].set_params(
-                    solver='lbfgs', penalty='l2', multi_class='multinomial')
-                lr_params = pgd.full_search_models_and_parameters['LogRClf_2nd'][1]
+    lr, lr_params = logreg_calibration_reference(Y_type, scoring, all_models_and_parameters)
 
     steps = []
-    steps.append(('LogRClf_2nd', 
-                  # pgd.full_search_models_and_parameters['LogRClf_2nd'][0]
-                  lr
-                  ))
+    steps.append(('LogRClf_2nd', lr))
     general_lr_pipeline = Pipeline(steps)
 
     temp_pipeline = general_lr_pipeline
@@ -889,7 +758,7 @@ def tune_calibrate_best_model(
     # check predicted probabilities for prediction confidence
     uncalibrated_lr_data = eu.probability_confidence_before_calibration(
         temp_pipeline, X_train, y_train, X_test, y_test, 'rscv', models_data,
-        classes, serial
+        labels, serial
         )
 
     del temp_pipeline
@@ -899,42 +768,13 @@ def tune_calibrate_best_model(
     lr_pred_score = uncalibrated_lr_data[0]
     lr_pipeline = uncalibrated_lr_data[1]
 
-    has_roc = 0
-    try:
-        uncalibrated_lr_data[2]
-    except IndexError:
-        print("ROC_AUC score is not available.")
-    except Exception as e:
-        print(e)
-    else:
-        lr_roc_auc = uncalibrated_lr_data[2]
-        has_roc = 1
-    finally:
-        print("We have LogRegression reference data to compare prediction "
-              "confidence of models.")
-        if has_roc:
-            print("ROC_AUC included.")
+    has_roc, lr_roc_auc = check_model_hasroc(
+        "LogRegression reference", uncalibrated_lr_data)
 
     predicted = lr_pipeline.predict(X_test)
 
-    # if np.bincount(y_train).size == 2:
-    if Y_type == 'binary':
-        print()
-        tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-        print("Test errors for 'LogRClf_2nd'")
-        print("\ttrue negatives: %d" % tn)
-        print("\tfalse positives: %d" % fp)
-        print("\tfalse negatives: %d" % fn)
-        print("\ttrue positives: %d" % tp)
-    else:
-        print()
-        print("Confusion matrix for 'LogRClf_2nd'.\n",
-              confusion_matrix(y_test, predicted))
-        print()
-    print("Classification report for 'LogRClf_2nd'\n",
-          classification_report(y_test, predicted))
+    confusion_matrix_and_clf_report(Y_type, 'LogRClf_2nd', y_test, predicted) 
     print()
-
     print()
 
     try:
@@ -955,24 +795,66 @@ def tune_calibrate_best_model(
 
     if best_model_name != "LogRClf_2nd":
 
-        if best_model_name in (
-            'baseline_nn_default_Clf_2nd', 'baseline_nn_smaller_Clf_2nd',
-                'larger_nn_Clf_2nd', 'deep_nn_Clf_2nd', 'deeper_nn_Clf_2nd'):
-
-            # no hyperparam tuning for now
-
-            tuning_method = 'None'
+        if best_model_name == "KerasClf_2nd":
 
             input_dim = int(X_train.shape[1])
 
-            batch_size = 32   # 5
+            param_grid = pgd.Keras_param_grid
+
+            # Keras Clf not included in 'all_models_and_parameters' dict
+
+            keras_clf_name = "KerasClf_2nd"
+
+            assert (keras_clf_name , best_model_name), "Best model is not a Keras Clf!"
+
+            # param_grid[keras_clf_name + '__units'] = sp_randint(input_dim, 5*input_dim)
+            for n in np.arange(0, 3):
+                param_grid[keras_clf_name + '__units_' + str(n)] = sp_randint(
+                    input_dim, 5*input_dim)
 
             best_model_estim = KerasClassifier(
                 build_fn=best_nn_build_fn, nb_epoch=nb_epoch,
-                input_dim=input_dim, batch_size=batch_size, verbose=0
+                input_dim=input_dim, verbose=0
                 )
 
+            if Y_type == 'multiclass':
+
+                output_dim = len(labels)
+
+                best_model_estim.set_params(output_dim=output_dim)
+
             train_NN_pipeline = training_pipeline
+
+            # tune, etc.
+
+            print()
+            print("===== Randomized Search CV")
+
+            # here you should be able to automatically assess whether
+            # current model in pipeline actually needs calibration or not
+
+            # if no calibration is needed,
+            # you could finalize if you're happy with default hyperparameters
+            # you could also compare
+            # model(default_parameters) vs model(tuned_parameters)
+
+            print()
+            print("Best model's [%s] parameter grid for RSCV:\n"
+                  % best_model_name, param_grid)
+            print()
+
+            temp_pipeline = training_pipeline    # best_pipeline
+
+            # check that the total space of params >= n_iter
+
+            # best_estimator_2nd
+
+            best_parameters = eu.tune_and_evaluate(
+                temp_pipeline, X_train, y_train, X_test, y_test, n_splits,
+                param_grid, n_iter, scoring, models_data, refit=False,
+                random_state=random_state)
+
+            temp_pipeline.set_params(**best_parameters)
 
             # plot a learning curve
 
@@ -984,73 +866,34 @@ def tune_calibrate_best_model(
             if Y_type == "binary":
                 y_lim = (0.5, 1.01)
 
-            l_curve = 0
-            try:
-                au.plot_learning_curve(
-                    train_NN_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
-                    scoring=scoring, n_jobs=-2, serial=serial,
-                    tuning=tuning_method, d_name=d_name
-                    )
+            au.plot_learning_curve(
+                train_NN_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
+                scoring=scoring, n_jobs=-2, serial=serial,
+                tuning=tuning_method, d_name=d_name
+                )
 
-                plt.show()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            else:
-                l_curve = 1
+            # plt.show()
 
-                del train_NN_pipeline
+            del train_NN_pipeline
 
-                train_NN_pipeline = training_pipeline
+            train_NN_pipeline = training_pipeline
 
-                print()
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
+            print()
 
             # check predicted probabilities for prediction confidence
             NN_data = eu.probability_confidence_before_calibration(
                 train_NN_pipeline, X_train, y_train, X_test, y_test,
-                tuning_method, models_data, classes, serial
+                tuning_method, models_data, labels, serial
                 )
 
             NN_pred_score = NN_data[0]
             NN_pipeline = NN_data[1]
 
-            has_NN_roc = 0
-            try:
-                NN_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                NN_roc_auc = NN_data[2]
-                has_NN_roc = 1
-            finally:
-                pass
+            has_NN_roc, NN_roc_auc = check_model_hasroc("target", NN_data)
 
             predicted = NN_pipeline.predict(X_test)
 
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for '%s'.\n"
-                      % best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for '%s'\n"
-                  % best_model_name, classification_report(y_test, predicted))
+            confusion_matrix_and_clf_report(Y_type, best_model_name, y_test, predicted) 
             print()
 
             w_NN_acc = NN_pipeline.score(X_test, y_test, sample_weight=w)*100
@@ -1096,560 +939,67 @@ def tune_calibrate_best_model(
 
             au.save_model(final_pipeline, f_name + '.pkl', d_name=d_name)
 
-            del final_pipeline
+            # del final_pipeline
+
+            if input_dim_final != input_dim:
+                for n in np.arange(0, 3):
+                    param_grid[keras_clf_name + '__units_' + str(n)] = sp_randint(
+                        input_dim_final, 5*input_dim_final)
 
             best_model_estim = KerasClassifier(
                 build_fn=best_nn_build_fn, nb_epoch=nb_epoch,
-                input_dim=input_dim_final, batch_size=batch_size, verbose=0
+                input_dim=input_dim, verbose=0
                 )
 
-            steps_fin = []
+            if Y_type == 'multiclass':
+
+                output_dim = len(labels)
+
+                best_model_estim.set_params(output_dim=output_dim)
+
+            # finalize Keras clf
+            steps_fin = [] 
             steps_fin.append((best_model_name, best_model_estim))
 
             untrained_NN_pipeline = Pipeline(steps_fin)
 
-            eu.model_finalizer(
-                untrained_NN_pipeline, X_transformed, y, scoring,
-                tuning_method, d_name, serial
-                )
+            # final_best_rscv_pipeline
+            # final_best_NN_pipeline = eu.rscv_tuner(
+            #     untrained_NN_pipeline, X_transformed, y, n_splits, param_grid, n_iter,
+            #     scoring, refit=True, random_state=random_state
+            #     )
+                
+            # f_name = best_model_name + '_' + tuning_method + '_' + serial
+            
+            # keras_f_name = au.create_keras_model_filename(f_name, d_name=d_name)
+            # final_best_NN_pipeline.named_steps[best_model_name].model.save(
+            #     keras_f_name + '.h5')
 
+            # this is equivalent to the process above
+            final_best_NN_pipeline = eu.tune_and_evaluate(
+                untrained_NN_pipeline, X_transformed, y, None, None, n_splits,
+                param_grid, n_iter, scoring, [], refit=True,
+                random_state=random_state, serial=serial, d_name=d_name, save=True)
+
+            w_best_NN_acc = final_best_NN_pipeline.score(
+                X_transformed, y, sample_weight=w_all)*100
+
+            print('Accuracy of best ("%s") on all data: %.2f%%' % (
+                best_model_name, w_best_NN_acc))
             print()
-
-            if Y_type == 'binary':
-
-                eu.plot_calibration_curves(
-                    y_test, best_model_name + '_' + tuning_method,
-                    models_data, 1, d_name
-                    )
-
-                plt.show()
-
-            print()
-
-        elif best_model_name == 'GaussianNBClf_2nd':
-
-            # no hyperparam tuning -- default: priors == None
-
-            # You should refactor this
-
-            tuning_method = 'None'
-
-            pipeline = training_pipeline
-
-            # plot a learning curve
-
-            print()
-            print()
-            print("[task] === plotting a learning curve")
-
-            y_lim = None
-            if Y_type == "binary":
-                y_lim = (0.5, 1.01)
-
-            l_curve = 0
-            try:
-                au.plot_learning_curve(
-                    pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
-                    scoring=scoring, n_jobs=-2, serial=serial,
-                    tuning=tuning_method, d_name=d_name
-                    )
-
-                plt.show()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            else:
-                l_curve = 1
-
-                del pipeline
-
-                pipeline = training_pipeline
-
-                print()
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
-
-            # check predicted probabilities for prediction confidence
-            GNB_unc_data = eu.probability_confidence_before_calibration(
-                pipeline, X_train, y_train, X_test, y_test, tuning_method,
-                models_data, classes, serial
-                )
-
-            GNB_pred_score = GNB_unc_data[0]
-            GNB_pipeline = GNB_unc_data[1]
-
-            has_GNB_roc = 0
-            try:
-                GNB_unc_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                GNB_roc_auc = GNB_unc_data[2]
-                has_GNB_roc = 1
-            finally:
-                print("We have LogRegression reference data to compare "
-                      "prediction confidence of models.")
-                if has_GNB_roc:
-                    print("ROC_AUC included.")
-
-            predicted = GNB_pipeline.predict(X_test)
-
-            print()
-            print("Before probability calibration...")
-
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for '%s'.\n"
-                      % best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for '%s'\n"
-                  % best_model_name, classification_report(y_test, predicted))
-            print()
-
-            w_GNB_acc = GNB_pipeline.score(X_test, y_test, sample_weight=w)*100
-
-            print()
-
-            if GNB_pred_score <= lr_pred_score:
-                print("'%s' is already well calibrated." % best_model_name)
-                print("Let's resume metrics on test data.")
-                print('Mean cv score [%s] of best uncalibrated ("%s"): %1.3f'
-                      % (scoring.strip('neg_'), best_model_name, best_score))
-
-                # w_GNB_acc = GNB_pipeline.score(X_test, y_test, sample_weight=w)*100
-                if has_GNB_roc:
-                    print('Scoring [%s] of best uncalibrated ("%s") on test data: %1.3f'
-                          % (scoring.strip('neg_'), best_model_name, GNB_roc_auc))
-                print('Accuracy of best uncalibrated ("%s") on test data: %.2f%%'
-                      % (best_model_name, w_GNB_acc))
-                print()
-
-                # GNB_pipeline
-                eu.model_finalizer(
-                    final_pipeline, X, y, scoring, tuning_method, d_name, serial)
-                print()
-
-            else:
-                print("'%s' needs probability calibration." % best_model_name)
-                print()
-
-                # In case model needed calibration
-                calib_GNB_data = eu.calibrate_probabilities(
-                    pipeline, X_train, y_train, X_test, y_test, 'sigmoid',
-                    tuning_method, models_data, kfold, serial
-                    )
-                print()
-
-                calib_GNB_pred_score = calib_GNB_data[0]
-                calib_GNB_pipeline = calib_GNB_data[1]
-
-                has_calib_GNB_roc = 0
-                try:
-                    calib_GNB_data[2]
-                except IndexError:
-                    print("ROC_AUC score is not available.")
-                except Exception as e:
-                    print(e)
-                else:
-                    calib_GNB_roc_auc = calib_GNB_data[2]
-                    has_GNB_roc = 1
-                finally:
-                    if has_calib_GNB_roc:
-                        print("ROC_AUC included.")
-
-                if calib_GNB_pred_score >= GNB_pred_score:
-                    print("Sorry, we could not calibrate '%s' any better."
-                          % best_model_name)
-                    print("Rejecting calibrated '%s' and saving the uncalibrated one."
-                          % best_model_name)
-
-                    print("Let's resume scores on validation and test data.")
-                    print('Mean cv score [%s] of best uncalibrated ("%s"): %1.3f'
-                          % (scoring.strip('neg_'), best_model_name, best_score))
-                    if has_GNB_roc:
-                        print('Scoring [%s] of best uncalibrated ("%s") on test data: %1.3f'
-                              % (scoring.strip('neg_'), best_model_name, GNB_roc_auc))
-                    print('Accuracy of best uncalibrated ("%s") on test data: %.2f%%'
-                          % (best_model_name, w_GNB_acc))
-                    print()
-
-                    eu.model_finalizer(
-                        final_pipeline, X, y, scoring, tuning_method, d_name, serial)
-                    print()
-
-                else:
-                    print("Achieved better calibration of model '%s'." % best_model_name)
-                    print("Let's resume scores on validation and test data.")
-                    print('Mean cv score [%s] of best uncalibrated ("%s"): %1.3f'
-                          % (scoring.strip(), best_model_name, best_score))
-
-                    predicted = calib_GNB_pipeline.predict(X_test)
-
-                    print()
-                    print("After probability calibration...")
-
-                    if Y_type == 'binary':
-                        tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                        print()
-                        print("Test errors for '%s'" % best_model_name)
-                        print("\ttrue negatives: %d" % tn)
-                        print("\tfalse positives: %d" % fp)
-                        print("\tfalse negatives: %d" % fn)
-                        print("\ttrue positives: %d" % tp)
-                    else:
-                        print()
-                        print("Confusion matrix for calibrated '%s'.\n"
-                              % best_model_name, confusion_matrix(y_test, predicted))
-                        print()
-                    print("Classification report for calibrated '%s'\n"
-                          % best_model_name, classification_report(y_test, predicted))
-                    print()
-
-                    w_GNB_acc = calib_GNB_pipeline.score(X_test, y_test, sample_weight=w)*100
-
-                    if has_calib_GNB_roc:
-                        print('Scoring [%s] of best calibrated ("%s") on test data: %1.3f'
-                              % (scoring.strip(), best_model_name, calib_GNB_roc_auc))
-                    print('Accuracy of best calibrated ("%s") on test data: %.2f%%'
-                          % (best_model_name, w_GNB_acc))
-                    print()
-                    print("=== [task]: Train and calibrate '%s on all data")
-
-                    # finalize model - tune hyperparameters on all data, calibrate
-                    # GaussianNB needs no tuning, just calibrate on all data
-
-                    final_calib_GNB_clf = CalibratedClassifierCV(
-                        final_pipeline, method='sigmoid', cv=kfold)
-                    final_calib_GNB_clf.fit(X, y)
-
-                    fin_w_GNB_acc = final_calib_GNB_clf.score(X, y, sample_weight=w_all)*100
-                    print("Overall accuracy of finalized best CCCV ('%s'): %.2f%%"
-                          % (best_model_name, fin_w_GNB_acc))
-
-                    f_name = best_model_name + '_final_calib_' + tuning_method + '_' + serial
-
-                    au.save_model(final_calib_GNB_clf, f_name + '.pkl', d_name=d_name)
-
-            if Y_type == 'binary':
-
-                eu.plot_calibration_curves(
-                    y_test, best_model_name + '_' + tuning_method, 
-                    models_data, 1, d_name
-                    )
-
-                plt.show()
-
-            print()
-
-        elif best_model_name == 'VClf_3_2nd':
-
-            print("======= RSCV of VotingClassifier w top 3 models")
-            print()
-            print("=== [task] Tune and eventually calibrate top 3 models")
-            print()
-            print()
-
-            # calibrate top 3 models if needed
-
-            # Tuning hyperparameters separately, first tune each model
-
-            top_3_models_data = all_models_and_parameters['VClf_3_2nd'][0]
-
-            print("Top 3 models data:\n", top_3_models_data)
-
-            # input("Press key to continue...")
-            print()
-
-            train_idx, test_idx = tt_index
-
-            if Y_type == 'binary':
-
-                # X_train, X_valid, y_train, y_valid = train_test_split(
-                #     X_train, y_train, stratify=y_train, test_size=0.2,
-                #     random_state=random_state
-                #     )
-
-                sss = StratifiedShuffleSplit(
-                    n_splits=1, test_size=0.2, random_state=random_state)
-
-                train_idx, val_idx = (None, None)
-
-                for trn, val in sss.split(X_train, y_train):
-                    train_idx, val_idx = trn, val
-
-                X_train, X_valid = X_train[train_idx], X_train[val_idx]
-                y_train, y_valid = y_train.iloc[train_idx], y_train.iloc[val_idx]
-
-                vc3_estimators = eu.calibrate_estimators_for_soft_voting(
-                    top_3_models_data, X_train, y_train, X_valid, y_valid,
-                    X_test, y_test, n_splits, n_iter, scoring, lr_pred_score,
-                    kfold, tuning_method
-                    )
-
-                refit_msg = " less 'valid'"
-
-            else:
-
-                vc3_estimators = []
-
-                nr_clf = 1
-                for k, v in top_3_models_data.items():
-                    print("Estimator nr. %d: %s" % (nr_clf, k))
-                    p = Pipeline([(k, v[3])])
-                    vc3_estimators.append(('p' + str(nr_clf), p))
-                    nr_clf += 1
-
-                # print("VClf3 estimators -- top 3 models':", vc3_estimators)
-                # print()
-
-                list_of_params = [v[4] for k, v in top_3_models_data.items()]
-
-                print("List of VClf3 params:", list_of_params)
-                print()
-                # input("Press any key to continue...")
-                # print()
-
-                vc3_params = dict()
-
-                nr_clf = 1
-                for par in list_of_params:
-                    new_par = {
-                        'VClf_3_2nd__p' + str(nr_clf) + '__'
-                        + k: v for k, v in par.items()
-                        }
-                    vc3_params.update(new_par)
-                    nr_clf += 1
-
-                vc3_param_grid = {
-                    'VClf_3_2nd__'
-                    + k: v for k, v in pgd.VC_3_param_grid.items()
-                    }
-
-                vc3_params.update(vc3_param_grid)
-
-                refit_msg = ''
-
-            print("VClf3 estimators -- top 3 models':", vc3_estimators)
-            print()
-
-            # nested-cv of VotingClassifier
-
-            # top 3 estimators now are well calibrated # rscv_vclf3
-            vclf3 = VotingClassifier(vc3_estimators, voting='soft')
-
-            # rscv on VotingClassifier to select weights
-
-            print()
-            print("Steps:\n", steps)
-            # input("Enter key to continue...")
-
-            # deleting step w LogRClf_2nd
-
-            training_pipeline.steps.pop(-1)
-
-            training_pipeline.steps.append(('VClf_3_2nd', vclf3))
-
-            # vclf3_pipeline = Pipeline(steps)
-
-            vclf3_pipeline = training_pipeline
-
-            temp_pipeline = vclf3_pipeline
-
-            # vclf3_pipeline <-- vclf3
-
-            # ...then tune VotingClassifier's weights
-
-            vc3_params = {
-                'VClf_3_2nd__' + k: v for k, v in pgd.VC_3_param_grid.items()
-                }
-
-            vc3_n_iter = au.check_search_space_of_params(n_iter, vc3_params)
-
-            best_vclf3_params = eu.tune_and_evaluate(
-                temp_pipeline, X_train, y_train, X_test, y_test, n_splits,
-                vc3_params, vc3_n_iter, scoring, models_data, refit=False,
-                random_state=random_state
-                )
-
-            print()
-            print("Parameters of completely tuned VotingClassifier:\n",
-                  best_vclf3_params)
-            print()
-
-            temp_pipeline.set_params(**best_vclf3_params)
-
-            tuned_vclf3_pipeline = temp_pipeline
-
-            # plot a learning curve
-
-            print()
-            print()
-            print("[task] === plotting a learning curve")
-
-            y_lim = None
-            if Y_type == "binary":
-                y_lim = (0.5, 1.01)
-
-            l_curve = 0
-            try:
-                au.plot_learning_curve(
-                    tuned_vclf3_pipeline, X_train, y_train, ylim=y_lim,
-                    cv=kfold, scoring=scoring, n_jobs=-2, serial=serial,
-                    tuning=tuning_method, d_name=d_name
-                    )
-
-                plt.show()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            else:
-                l_curve = 1
-
-                del tuned_vclf3_pipeline
-                tuned_vclf3_pipeline = temp_pipeline
-
-                print()
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
-
-            # this fct also fits model/pipeline
-            vclf3_data = eu.probability_confidence_before_calibration(
-                    tuned_vclf3_pipeline, X_train, y_train, X_test, y_test,
-                    tuning_method, models_data, classes, serial
-                    )
-
-            # trained_vclf3_pred_score = vclf3_data[0]
-            trained_vclf3_pipeline = vclf3_data[1]
-
-            has_vc3_roc = 0
-            try:
-                vclf3_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                trained_vclf3_roc_auc = vclf3_data[2]
-                has_vc3_roc = 1
-            finally:
-                print("We have target data to compare prediction confidence "
-                      "of models.")
-                if has_vc3_roc:
-                    print("ROC_AUC included.")
-
-            predicted = trained_vclf3_pipeline.predict(X_test)
-
-            print()
-
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for calibrated '%s'.\n"
-                      % best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for calibrated '%s'\n"
-                  % best_model_name, classification_report(y_test, predicted))
-            print()
-
-            w_vclf3_acc = trained_vclf3_pipeline.score(
-                X_test, y_test, sample_weight=w)*100
-            # predictions = tuned_vclf3_pipeline.predict(X_test)
-
-            print()
-            print("Let's resume scores on validation and test data.")
-            print('Mean cv score [%s] of best uncalibrated ("%s"): %1.3f'
-                  % (scoring.strip('neg_'), best_model_name, best_score))
-            if has_vc3_roc:
-                print("ROC_AUC of 'VClf_3_2nd' on test data: %1.3f"
-                      % trained_vclf3_roc_auc)
-            print("Accuracy of best 'VClf_3_2nd' on test data: %.2f%%"
-                  % w_vclf3_acc)
-            print()
-
-            # input("Press key to continue...")
-            print()
-
-            print("=== [task] Refit 'VClf_3_2nd' on all data%s." % refit_msg)
-            print()
-
-            # calibrate top 3 models once again on all data...
-
-            final_idx = np.concatenate((train_idx, test_idx), axis=0)
-            X_final = X.iloc[final_idx]
-            y_final = y.iloc[final_idx]
-
-            print("X shape: ", X_final.shape)
-            print("y shape: ", y_final.shape)
-            print("X sample:\n", X_final[:3])
-            print("Y sample:\n", y_final[:3])
-            print()
-
-            vclf3 = VotingClassifier(vc3_estimators, voting='soft')
-
-            steps_fin.pop(-1)
-
-            print()
-            print("Steps:\n", steps_fin)
-            # input("Enter key to continue...")
-
-            steps_fin.append(('VClf_3_2nd', vclf3))
-
-            vclf3_pipeline = Pipeline(steps_fin)
-
-            print()
-            print("VotingClassifier w calibrated estimators:", vclf3_pipeline)
-            print()
-
-            # vclf3_pipeline
-            best_vclf3_estimator = eu.rscv_tuner(
-                vclf3_pipeline, X_final, y_final, n_splits, vc3_params,
-                vc3_n_iter, scoring, refit=True, random_state=random_state
-                )
-
-            # final
-
-            f_name = 'VClf_3_2nd__no_calib_' + tuning_method + '_' + serial
-
-            au.save_model(best_vclf3_estimator, f_name + '.pkl', d_name=d_name)
 
             # Uncomment to see pipeline, steps and params
-            """
+            # print()
+            # print("Best estimator [%s]'s' params after hyp-tuning on all data."
+            #         % best_model_name)
+            # for step in final_best_NN_pipeline.steps:
+            #     print(type(step))
+            #     print("step:", step[0])
+            #     params = step[1].get_params()
+            #     for param_name in sorted(params.keys()):
+            #         print("\t%s: %r" % (param_name, params[param_name]))
+
             print()
-            print("Finalized best model '%s'." % best_model_name)
-            for step in best_vclf3_estimator.steps:
-                print(type(step))
-                print("step:", step[0])
-                params = step[1].get_params()
-                for param_name in sorted(params.keys()):
-                    print("\t%s: %r" % (param_name, params[param_name]))
-            """
 
             if Y_type == 'binary':
 
@@ -1661,29 +1011,16 @@ def tune_calibrate_best_model(
                 plt.show()
 
             print()
-
-            plt.close()
 
         else:
 
-            # tuning and eventually calibrating
-            # any other model != GaussianNB and LogReg
+            # tuning and eventually calibrating any other model !=  LogReg
 
-            m = re.search("Bagging_", best_model_name)
-            if m:
-                bagging_param_grid = \
-                all_models_and_parameters['Bagging_' + best_model_name][1]
+            param_grid = all_models_and_parameters[best_model_name][1]
 
-                if best_model_name == 'Bagging_SVMClf_2nd':
-                    # 'Bagging_SVMClf_2nd' made of 10 estimators
-                    del bagging_param_grid['n_estimators']
-                
-                param_grid = {
-                    best_model_name + '__'
-                    + k: v for k, v in bagging_param_grid.items()
-                    }
-            else:
-                param_grid = all_models_and_parameters[best_model_name][1]
+            if best_model_name == 'Bagging_SVMClf_2nd':
+                # 'Bagging_SVMClf_2nd' made of 10 estimators
+                del param_grid['Bagging_SVMClf_2nd__n_estimators']
 
             # tune, etc.
 
@@ -1726,32 +1063,18 @@ def tune_calibrate_best_model(
             if Y_type == "binary":
                 y_lim = (0.5, 1.01)
 
-            l_curve = 0
-            try:
-                au.plot_learning_curve(
-                    temp_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
-                    scoring=scoring, n_jobs=-2, serial=serial,
-                    tuning=tuning_method, d_name=d_name
-                    )
+            au.plot_learning_curve(
+                temp_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
+                scoring=scoring, n_jobs=-2, serial=serial,
+                tuning=tuning_method, d_name=d_name
+                )
 
-                plt.show()
-            except JoblibValueError as jve:
-                print("Not able to complete learning process...")
-            except ValueError as ve:
-                print(ve)
-            except Exception as e:
-                print(e)
-            else:
-                l_curve = 1
+            # plt.show()
 
-                del temp_pipeline
-                temp_pipeline = training_pipeline
+            del temp_pipeline
+            temp_pipeline = training_pipeline
 
-                print()
-            finally:
-                if not l_curve:
-                    print("Sorry. Learning Curve plotting failed.")
-                    print()
+            print()
 
             ###
 
@@ -1763,7 +1086,7 @@ def tune_calibrate_best_model(
             # check predicted probabilities for prediction confidence
             uncalibrated_data = eu.probability_confidence_before_calibration(
                 temp_pipeline, X_train, y_train, X_test, y_test, tuning_method,
-                models_data, classes, serial
+                models_data, labels, serial
                 )
 
             del temp_pipeline
@@ -1771,21 +1094,7 @@ def tune_calibrate_best_model(
             rscv_pred_score = uncalibrated_data[0]
             rscv_pipeline = uncalibrated_data[1]
 
-            has_roc = 0
-            try:
-                uncalibrated_data[2]
-            except IndexError:
-                print("ROC_AUC score is not available.")
-            except Exception as e:
-                print(e)
-            else:
-                rscv_roc_auc = uncalibrated_data[2]
-                has_roc = 1
-            finally:
-                print("We have target data to compare prediction confidence "
-                      "of models.")
-                if has_roc:
-                    print("ROC_AUC included.")
+            has_roc, rscv_roc_auc = check_model_hasroc("target", uncalibrated_data)
 
             print()
             predicted = rscv_pipeline.predict(X_test)
@@ -1793,24 +1102,8 @@ def tune_calibrate_best_model(
             print()
             print("Before probability calibration...")
 
-            if Y_type == 'binary':
-                tn, fp, fn, tp = confusion_matrix(y_test, predicted).ravel()
-                print()
-                print("Test errors for '%s'" % best_model_name)
-                print("\ttrue negatives: %d" % tn)
-                print("\tfalse positives: %d" % fp)
-                print("\tfalse negatives: %d" % fn)
-                print("\ttrue positives: %d" % tp)
-            else:
-                print()
-                print("Confusion matrix for '%s'.\n"
-                      % best_model_name, confusion_matrix(y_test, predicted))
-                print()
-            print("Classification report for  '%s'\n"
-                  % best_model_name, classification_report(y_test, predicted))
+            confusion_matrix_and_clf_report(Y_type, best_model_name, y_test, predicted)
             print()
-
-            # input("Enter key to continue... \n")
             print()
 
             # in case of LogRegression,
@@ -1883,25 +1176,13 @@ def tune_calibrate_best_model(
                 # In case model needs calibration
                 calib_data = eu.calibrate_probabilities(
                     temp_pipeline, X_train, y_train, X_test, y_test, 'sigmoid',
-                    tuning_method, models_data, kfold, serial
+                    tuning_method, models_data, kfold, labels, serial
                     )
 
                 calib_rscv_pred_score = calib_data[0]
                 calib_rscv_pipeline = calib_data[1]
-
-                has_calib_roc = 0
-                try:
-                    calib_data[2]
-                except IndexError:
-                    print("ROC_AUC score is not available.")
-                except Exception as e:
-                    print(e)
-                else:
-                    calib_rscv_roc_auc = calib_data[2]
-                    has_calib_roc = 1
-                finally:
-                    if has_calib_roc:
-                        print("We have ROC_AUC for calibrated best model.")
+                
+                has_calib_roc, calib_rscv_roc_auc = check_model_hasroc("target", calib_data)
 
                 if calib_rscv_pred_score >= rscv_pred_score:
                     print("Sorry, we could not calibrate '%s' any better."
@@ -1927,7 +1208,7 @@ def tune_calibrate_best_model(
                         scoring, refit=True, random_state=random_state)
 
                     w_best_rscv_acc = final_best_rscv_pipeline.score(
-                        X, Y, sample_weight=w_all)*100
+                        X, y, sample_weight=w_all)*100
 
                     print('Accuracy of best  ("%s") on all data: %.2f%%'
                           % (best_model_name, w_best_rscv_acc))
@@ -1941,16 +1222,14 @@ def tune_calibrate_best_model(
                     print()
 
                     # Uncomment to see pipeline, steps and params
-                    """
-                    print("Finalized uncalibrated best model '%s'." % best_model_name)
-                    for step in final_best_rscv_pipeline.steps:
-                        print(type(step))
-                        print("step:", step[0])
-                        params = step[1].get_params()
-                        for param_name in sorted(params.keys()):
-                            print("\t%s: %r" % (param_name, params[param_name]))
-                    print()
-                    """
+                    # print("Finalized uncalibrated best model '%s'." % best_model_name)
+                    # for step in final_best_rscv_pipeline.steps:
+                    #     print(type(step))
+                    #     print("step:", step[0])
+                    #     params = step[1].get_params()
+                    #     for param_name in sorted(params.keys()):
+                    #         print("\t%s: %r" % (param_name, params[param_name]))
+                    # print()
 
                 else:
                     print("Achieved better calibration of model '%s'."
@@ -1962,17 +1241,10 @@ def tune_calibrate_best_model(
                     w_calib_rscv_acc = calib_rscv_pipeline.score(
                         X_test, y_test, sample_weight=w)*100
 
-                    try:
-                        calib_rscv_roc_auc
-                    except NameError:
-                        print("ROC_AUC score is not available.")
-                    except Exception as e:
-                        print(e)
-                    else:
+                    
+                    if calib_rscv_roc_auc is not None:
                         print('Scoring [%s] of best calibrated ("%s") on test data: %1.3f'
                               % (scoring, best_model_name, calib_rscv_roc_auc))
-                    finally:
-                        pass
 
                     print('Accuracy of best calibrated ("%s") on test data: %.2f%%'
                           % (best_model_name, w_calib_rscv_acc))
@@ -2030,33 +1302,18 @@ def tune_calibrate_best_model(
         if Y_type == "binary":
             y_lim = (0.5, 1.01)
 
-        l_curve = 0
-        try:
-            au.plot_learning_curve(
-                lr_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
-                scoring=scoring, n_jobs=-2, serial=serial,
-                tuning=tuning_method, d_name=d_name
-                )
+        au.plot_learning_curve(
+            lr_pipeline, X_train, y_train, ylim=y_lim, cv=kfold,
+            scoring=scoring, n_jobs=-2, serial=serial,
+            tuning=tuning_method, d_name=d_name
+            )
 
-            plt.show()
-        except JoblibValueError as jve:
-            print("Not able to complete learning process...")
-        except ValueError as ve:
-            print(ve)
-        except Exception as e:
-            print(e)
-        else:
-            l_curve = 1
+        # plt.show()
 
-            del lr_pipeline
-            lr_pipeline = uncalibrated_lr_data[1]
+        del lr_pipeline
+        lr_pipeline = uncalibrated_lr_data[1]
 
-            print()
-        finally:
-            if not l_curve:
-                print("Sorry. Learning Curve plotting failed.")
-                print()
-
+        print()
         print()
         print("'%s' is already well calibrated for definition!"
               % best_model_name)
@@ -2067,27 +1324,11 @@ def tune_calibrate_best_model(
 
         # best_lr_pipeline = lr_pipeline
 
-        has_lr_roc = 0
-        try:
-            lr_roc_auc
-        except NameError:
-            print("ROC_AUC score is not available.")
-        except Exception as e:
-            print(e)
-        else:
-            best_lr_roc_auc = lr_roc_auc
-            has_lr_roc = 1
-
-            # print("ROC_AUC score on left-out data: %1.3f." % lr_roc_auc)
-            # print("- The higher, the better.")
-        finally:
-            pass
+        if lr_roc_auc is not None:
+            print('Scoring [%s] of best uncalibrated ("%s") on test data: %1.3f'
+                  % (scoring, best_model_name, lr_roc_auc))
 
         w_lr_acc = lr_pipeline.score(X_test, y_test, sample_weight=w)*100
-
-        if has_lr_roc:
-            print('Scoring [%s] of best uncalibrated ("%s") on test data: %1.3f'
-                  % (scoring, best_model_name, best_lr_roc_auc))
         print('Accuracy of best uncalibrated ("%s") on test data: %.2f%%'
               % (best_model_name, w_lr_acc))
         print()
@@ -2116,15 +1357,13 @@ def tune_calibrate_best_model(
         print()
 
         # Uncomment to see pipeline, steps and params
-        """
-        print("Finalized '%s'." % best_model_name)
-        for step in final_best_lr_pipeline.steps:
-            print("step:", step[0])
-            params = step[1].get_params()
-            for param_name in sorted(params.keys()):
-                print("\t%s: %r" % (param_name, params[param_name]))
-        print()
-        """
+        # print("Finalized '%s'." % best_model_name)
+        # for step in final_best_lr_pipeline.steps:
+        #     print("step:", step[0])
+        #     params = step[1].get_params()
+        #     for param_name in sorted(params.keys()):
+        #         print("\t%s: %r" % (param_name, params[param_name]))
+        # print()
 
         if Y_type == 'binary':
             eu.plot_calibration_curves(

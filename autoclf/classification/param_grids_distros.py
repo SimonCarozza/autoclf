@@ -1,6 +1,5 @@
 """Hyperparameter grids and distros for GridSearchCV and RandomizedSearchCV."""
 
-from sklearn.naive_bayes import BernoulliNB
 from sklearn.naive_bayes import GaussianNB
 from sklearn.linear_model import LogisticRegression
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -30,13 +29,12 @@ from scipy.stats import beta as sp_beta
 import numpy as np
 
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
+warnings.filterwarnings("ignore")
 
 # list of candidate hyperparameter grids for GSCV and distros for RSCV
 # param spaces for searching with Hyperopt
 
-#
+# LogisticRegression
 
 LogR_gscv_param_grid = dict(
      LogRClf_2nd__C=[0.01, 0.1, 1., 10., 100.],
@@ -52,24 +50,16 @@ LogR_param_grid = dict(
      LogRClf_2nd__max_iter=sp_randint(10, 1e5)
      )
 
+# GaussianNB 
+# sklearn 0.19: only one paramater: priors=None
 
-# BernoulliNB
+GNB_gscv_param_grid = dict(
+    GaussianNBClf_2nd__var_smoothing=[1e-11, 1e-9, 1e-7, 1e-5, 1e-3, 1e-1]
+)
 
-BernNB__gscv_param_grid = dict(
-     BernNBClf_2nd__alpha=[.001, .01, .1, 1., 10., 100.],
-     BernNBClf_2nd__fit_prior=[False, True]
-     )
-
-
-BernNB_param_grid = dict(
-     BernNBClf_2nd__alpha=sp_exp(scale=100),
-     BernNBClf_2nd__fit_prior=[False, True]
-     )
-
-
-# GaussianNB only one paramater: priors=None
-
-# no parameters
+GNB_param_grid = dict(
+    GaussianNBClf_2nd__var_smoothing=sp_exp(scale=.1)
+)
 
 
 # LDAClf_2nd -- you may perform dimensionality reduction directly w LDAClf_2nd
@@ -90,11 +80,13 @@ LDA_param_grid = dict(
 # QDA
 
 QDA_gscv_param_grid = dict(
-    QDAClf_2nd__tol=[0.0001, 0.001, 0.01, 0.1, 1.]
+    QDAClf_2nd__tol=[0.0001, 0.001, 0.01, 0.1, 1.],
+    QDAClf_2nd__store_covariance=[False, True],
     )
 
 QDA_param_grid = dict(
-    QDAClf_2nd__tol=sp_exp(scale=1)
+    QDAClf_2nd__tol=sp_exp(scale=1),
+    QDAClf_2nd__store_covariance=[False, True]
     )
 
 
@@ -225,8 +217,6 @@ AdaBC_param_grid = dict(
 # XGBoost
 
 if xgb_import:
-    # XGBClf_2nd__colsample_bytree=one_to_left,
-    # XGBClf_2nd__subsample=one_to_left,
     XGBC_param_grid = dict(
         XGBClf_2nd__n_estimators=sp_randint(100, 1000),
         XGBClf_2nd__max_depth=sp_randint(3, 40),
@@ -235,18 +225,7 @@ if xgb_import:
         XGBClf_2nd__reg_alpha=from_zero_positive,
         XGBClf_2nd__min_child_weight=from_zero_positive,
         XGBClf_2nd__subsample=second_half,
-        # XGBClf_2nd__colsample_bytree=second_half
         )
-
-# [[3,2,1], [3,1,2], [2,3,1], [2,1,3], [1,2,3], [1,3,2]; [3,1,1], [5, 1, 1]]
-VC_3_param_grid = dict(
-    weights=[None, [2, 1, 1], [1, 2, 1], [1, 1, 2],
-                   [3, 2, 1], [3, 1, 2], [2, 3, 1],
-                   [2, 1, 3], [1, 2, 3], [1, 3, 2],
-                   [3, 1, 1], [1, 3, 1], [1, 1, 3],
-                   [5, 1, 1], [1, 5, 1], [1, 1, 5]],
-    flatten_transform=[None, True]
-             )
 
 Bagging_gscv_param_grid = dict(
     n_estimators=[3, 5, 10, 15, 30], max_samples=[0.1, 0.2, 0.3, 0.5, 1.0])
@@ -254,6 +233,17 @@ Bagging_gscv_param_grid = dict(
 Bagging_param_grid = dict(
     n_estimators=[3, 5, 10, 15, 30], max_samples=sp_unif(scale=1))
 
+# KerasClassifier
+
+# define nr of units at run time
+Keras_param_grid = dict(
+    KerasClf_2nd__batch_size=[8, 16, 32, 64, 128],  # sp_randint(8, 128),
+    # KerasClf_2nd__n_layer=[0, 1, 2, 3] # sp_randint(0, 3), 
+    # KerasClf_2nd__power=sp_randint(1, 3) # sp_exp(scale=3)
+    )
+
+for n in np.arange(0, 3):
+    Keras_param_grid["KerasClf_2nd__dropout_rate_" + str(n)]=sp_unif(scale=.9)
 
 ###
 
@@ -264,15 +254,14 @@ seed = 7
 # np.random.seed(seed)
 
 
-# 'DummyClf_2nd' initialized inside classification_functions.py at run-time
+# 'DummyClf_2nd' initialized inside evaluate.py at run-time
 
 # sklearn 0.20.1 default {solver='lbfgs', multi_class='auto'}
 # sklearn 0.19.1 {solver='liblinear', multi_class='ovr'}
 full_search_models_and_parameters = {
     'LogRClf_2nd': (LogisticRegression(random_state=seed), 
         LogR_param_grid),
-    'BernNBClf_2nd': (BernoulliNB(), BernNB_param_grid),
-    'GaussianNBClf_2nd': (GaussianNB(), dict()),
+    'GaussianNBClf_2nd': (GaussianNB(), GNB_param_grid),
     'LDAClf_2nd': (LinearDiscriminantAnalysis(), LDA_param_grid),
     'QDAClf_2nd': (QuadraticDiscriminantAnalysis(), QDA_param_grid),
     'KNeighborsClf_2nd': (KNeighborsClassifier(), KNC_param_grid),
@@ -301,7 +290,7 @@ if xgb_import:
     (XGBClassifier(seed=seed), XGBC_param_grid)
 
 
-# Lightly pre-optimized models to be used a starting point for ML problems
+# Lightly pre-optimized models to be used as starting point for ML problems
 # R. Olson et al.: https://arxiv.org/abs/1708.05070
 
 # sklearn 0.20.1 default {solver='lbfgs', multi_class='auto'}

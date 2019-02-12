@@ -12,6 +12,7 @@ import os
 import sys
 
 from autoclf.classification import eval_utils as eu
+from autoclf.classification.evaluate import create_ensemble_of_best_models
 from autoclf.classification import param_grids_distros as pgd
 from autoclf import auto_utils as au
 from autoclf.classification import train_calibrate as tc
@@ -170,25 +171,18 @@ if __name__ == '__main__':
 
     print("=== [task] Comparing DummyClassifier to ensemble of GaussianNBs")
     print()
-
-    base_estimator = GaussianNB()
-    base_estimator_name = 'GaussianNBClf'
-    bagging_estimator_name = 'BaggingClf_2nd_' + base_estimator_name
-
-    bagging_param_grid = {
-        bagging_estimator_name + '__'
-        + k: v for k, v in pgd.Bagging_param_grid.items()
-        }
-    bagging_estimator = BaggingClassifier(base_estimator, random_state=seed)
+    
+    bag_estim, bag_estim_name, bag_param_grid = create_ensemble_of_best_models(
+        'GaussianNBClf_2nd', GaussianNB(), seed)
 
     average_scores_and_best_scores = eu.single_nested_rscv_evaluation(
-        X_train_transformed, y_train, bagging_estimator_name,
-        bagging_estimator, bagging_param_grid, wtr, scoring, n_iter,
+        X_train_transformed, y_train, bag_estim_name,
+        bag_estim, bag_param_grid, wtr, scoring, n_iter,
         inner_cv, outer_cv, dict(), scores_of_best_model, results, 
         names, seed)
 
-    all_models_and_parameters[bagging_estimator_name] = (
-        bagging_estimator, bagging_param_grid
+    all_models_and_parameters[bag_estim_name] = (
+        bag_estim, bag_param_grid
         )
 
     print()
