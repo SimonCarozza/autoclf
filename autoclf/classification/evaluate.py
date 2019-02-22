@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore")
 
 
 def create_keras_classifiers(
-    y_type, input_dim, output_dim, labels, nb_epoch, batch_size):
+    y_type, input_dim, labels, nb_epoch, batch_size):
 
     keras_clf_fcts = dict(
             baseline_nn_default_Clf_2nd=(
@@ -51,6 +51,8 @@ def create_keras_classifiers(
                 nn.larger_deep_nn_model_multiclass, nn.larger_deep_nn_model)
 
     names_and_models=dict()
+
+    output_dim = 1
 
     if y_type == 'multiclass':
 
@@ -79,13 +81,14 @@ def create_keras_classifiers(
 
 
 def create_best_keras_clf_architecture(
-        keras_clf_name, y_type, labels, input_dim, output_dim, nb_epoch, 
-        keras_param_grid):
+        keras_clf_name, y_type, labels, input_dim, nb_epoch, keras_param_grid):
     """
     Find KerasClf best architecture using
 
     ------
     """
+
+    output_dim = 1
 
     for n in np.arange(0, 3):
         keras_param_grid[keras_clf_name + '__units_' + str(n)] = sp_randint(
@@ -384,12 +387,10 @@ def perform_classic_cv_evaluation_and_calibration(
 
     nb_epoch = au.select_nr_of_iterations('nn')
 
-    output_dim = 1
-
     batch_size = 32
 
     kclf_names_and_models = create_keras_classifiers(
-        Y_type, input_dim, output_dim, labels, nb_epoch, batch_size)
+        Y_type, input_dim, labels, nb_epoch, batch_size)
 
     for k, v in kclf_names_and_models.items():
         complex_models_and_parameters[k] = v
@@ -697,7 +698,7 @@ def perform_nested_cv_evaluation_and_calibration(
     print()
 
     input_dim = int(X_train_transformed.shape[1])
-    output_dim = 1
+
     if not followup:
         nb_epoch = au.select_nr_of_iterations('nn')
     else:
@@ -706,8 +707,7 @@ def perform_nested_cv_evaluation_and_calibration(
     keras_clf_name = "KerasClf_2nd"
 
     keras_nn_model, keras_param_grid = create_best_keras_clf_architecture(
-        keras_clf_name, Y_type, labels, input_dim, output_dim, nb_epoch, 
-        pgd.Keras_param_grid)
+        keras_clf_name, Y_type, labels, input_dim, nb_epoch, pgd.Keras_param_grid)
 
     complex_models_and_parameters[keras_clf_name] = (
         keras_nn_model, keras_param_grid)

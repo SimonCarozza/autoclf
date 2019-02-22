@@ -27,6 +27,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_score
 # from sklearn.model_selection import cross_val_predict
 from sklearn.model_selection import RandomizedSearchCV
+try:
+    from skopt import BayesSearchCV
+except ImportError as ie:
+    print(ie)
+    print("Install scikit-optimize package if you want to use BayesCV")
 from sklearn.base import is_classifier
 
 from sklearn.externals.joblib.my_exceptions import JoblibValueError
@@ -173,8 +178,8 @@ def model_finalizer(
 
 
 def rscv_tuner(
-        estimator, dx, dy, n_splits, param_grid, n_iter, scoring, refit=False,
-        random_state=0):
+        estimator, dx, dy, n_splits, param_grid, n_iter, scoring, refit=False, 
+        cv_meth='rscv', random_state=0):
     """Tune best estimator before finalization."""
     if (isinstance(scoring, list) or isinstance(scoring, dict)
             or isinstance(scoring, tuple)):
@@ -194,13 +199,29 @@ def rscv_tuner(
     kfold = StratifiedKFold(
         n_splits=n_splits, shuffle=True, random_state=random_state)
 
-    clf = RandomizedSearchCV(
-        estimator, param_distributions=param_grid, cv=kfold, iid=False, 
-        n_iter=n_iter, n_jobs=-2, pre_dispatch="2*n_jobs", scoring=scoring, 
-        refit=refit, random_state=random_state)
+    xscv_prefix=None
 
-    print("[task] === Hyperparameter tuning of %s with 'RandomizedSearchCV'"
-          % name)
+    if cv_meth == 'rscv':
+        clf = RandomizedSearchCV(
+            estimator, param_distributions=param_grid, cv=kfold, iid=False, 
+            n_iter=n_iter, n_jobs=-2, pre_dispatch="2*n_jobs", scoring=scoring, 
+            refit=refit, random_state=random_state, error_score=np.nan)
+
+        xscv_prefix='Randomized'
+
+    elif cv_meth == 'bscv':
+        # check 'params' is of type BayesSearchCV's search_spaces
+        clf = BayesSearchCV(
+            estimator, search_spaces=param_grid, iid=False, cv=kfold, n_iter=n_iter, 
+            scoring=scoring, random_state=random_state, error_score=np.nan)
+
+        xscv_prefix='Bayes'
+
+    else:
+        raise ValueError("Error. Valid values are ['rscv', 'bscv']")
+
+    print("[task] === Hyperparameter tuning of %s with '%sSearchCV'"
+          % (name, xscv_prefix))
 
     try:
         clf.fit(dx, dy)
@@ -208,9 +229,9 @@ def rscv_tuner(
         print(te)
         if hasattr(dx, 'values') is True:
             dx = dx.values
-        if hasattr(dx, 'values') is True:
-            dx = dx.values
-        clf.fit(dx.values, dy.values)
+        if hasattr(dy, 'values') is True:
+            dy = dy.values
+        clf.fit(dx, dy)
     except Exception as e:
         raise e
 
@@ -221,7 +242,7 @@ def rscv_tuner(
 def tune_and_evaluate(
         estimator, dx_train, dy_train, dx_test, dy_test, splits, param_grid,
         n_iter, scoring, models_data, refit, random_state, serial=0, 
-        d_name=None, save=False):
+        d_name=None, save=False, cv_meth='rscv'):
     """Tune and evaluate estimator with the options of refit and saving it."""
     if (isinstance(scoring, list) or isinstance(scoring, dict)
             or isinstance(scoring, tuple)):
@@ -260,14 +281,26 @@ def tune_and_evaluate(
     # kfold = KFold(n_splits=10, random_state=random_state)
     kfold = StratifiedKFold(
        n_splits=splits, shuffle=True, random_state=random_state)
-
-    clf_name = 'RandomizedSearchCV'
     
     try:
-        clf = RandomizedSearchCV(
-        estimator, param_distributions=param_grid, cv=kfold, iid=False, 
-        n_iter=n_iter, n_jobs=-2, pre_dispatch='2*n_jobs', scoring=scoring, 
-        refit=refit, random_state=random_state)
+        if cv_meth=='rscv':
+            clf_name = 'RandomizedSearchCV'
+
+            clf = RandomizedSearchCV(
+                estimator, param_distributions=param_grid, cv=kfold, iid=False, 
+                n_iter=n_iter, n_jobs=-2, pre_dispatch='2*n_jobs', scoring=scoring, 
+                refit=refit, random_state=random_state)
+
+        elif cv_meth=='bscv':
+            clf_name = 'BayesSearchCV'
+
+            clf = BayesSearchCV(
+                estimator, search_spaces=param_grid, cv=kfold, iid=False, 
+                n_iter=n_iter, n_jobs=-2, pre_dispatch='2*n_jobs', scoring=scoring, 
+                refit=refit, random_state=random_state)
+        else:
+            raise ValueError("valid values are ['rscv', 'bscv']")
+
     except TypeError as te:
         print(te)
     except ValueError as ve:
@@ -1736,7 +1769,7 @@ def nested_rscv_model_evaluation(
 def single_nested_rscv_evaluation(
         dx_train, dy_train, name, model, params, sample_weight, scoring,
         n_iter, inner_cv, outer_cv, average_scores_across_outer_folds,
-        scores_of_best_model, results, names, random_state):
+        scores_of_best_model, results, names, random_state, cv_meth='rscv'):
     """Non-nested cv for evaluation of a single model."""
     if (isinstance(scoring, list) or isinstance(scoring, dict)
             or isinstance(scoring, tuple)):
@@ -1799,9 +1832,18 @@ def single_nested_rscv_evaluation(
 
         # estimate score [accuracy, roc_auc, ...] on
         # the stratified k-fold splits of the data
-        clf = RandomizedSearchCV(
-            pipeline, param_distributions=params, iid=False, cv=inner_cv, 
-            n_iter=n_iter, scoring=scoring, random_state=random_state)
+        if cv_meth == 'rscv':
+            clf = RandomizedSearchCV(
+                pipeline, param_distributions=params, iid=False, cv=inner_cv, 
+                n_iter=n_iter, scoring=scoring, random_state=random_state)
+        elif cv_meth == 'bscv':
+            # check 'params' is of type BayesSearchCV's search_spaces
+            clf = BayesSearchCV(
+                pipeline, search_spaces=params, iid=False, cv=inner_cv, 
+                n_iter=n_iter, scoring=scoring, random_state=random_state)
+        else:
+            raise ValueError("%s is not a valid value for var 'cv_meth', "
+                             "valid values are ['rscv', 'bscv']")
     else:
 
         clf = model

@@ -1,6 +1,6 @@
 package:
   name: autoclf
-  version: "0.1.4"
+  version: "0.1.6"
 
 source:
   # git_rev: 0.1.4
@@ -17,7 +17,7 @@ requirements:
     - keras
     - matplotlib {{ matplotlib }}
     - pandas
-    - py-xgboost>=0.8
+    - py-xgboost 0.80
 
 about:
   home: https://bitbucket.org/simoneci/autoclf/

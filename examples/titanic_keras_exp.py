@@ -54,6 +54,9 @@ if __name__ == '__main__':
 
     d_name = ga.get_name()
 
+    if d_name is None:
+        d_name = "titanic"
+
     # fix random seed for reproducibility
     seed = 7
     np.random.seed(seed)
@@ -267,7 +270,7 @@ if __name__ == '__main__':
         batch_size = 32
 
         complex_models_and_parameters = create_keras_classifiers(
-            Y_type, input_dim, output_dim, labels, nb_epoch, batch_size)
+            Y_type, input_dim, labels, nb_epoch, batch_size)
 
         average_scores_and_best_scores = eu.classic_cv_model_evaluation(
             X_train_transformed, y_train, complex_models_and_parameters, scoring,
@@ -283,8 +286,7 @@ if __name__ == '__main__':
         keras_clf_name = "KerasClf_2nd"
 
         keras_nn_model, keras_param_grid = create_best_keras_clf_architecture(
-            keras_clf_name, Y_type, labels, input_dim, output_dim, 
-            nb_epoch, Keras_param_grid)
+            keras_clf_name, Y_type, labels, input_dim, nb_epoch, Keras_param_grid)
 
         complex_models_and_parameters[keras_clf_name] = (
             keras_nn_model, keras_param_grid)

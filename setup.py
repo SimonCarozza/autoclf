@@ -15,7 +15,7 @@ if sys.version_info < req_version:
 
 setup(
     name="autoclf",
-    version="0.1.5",
+    version="0.1.6",
     author="Simon Carozza",
     author_email="simoncarozza@gmail.com",
     description="A tabular data classifier",
@@ -39,7 +39,9 @@ setup(
         "keras",
         "tensorflow"
     ],
-    extras_require={"py-xgboost": ["py-xgboost==0.8"]},
+    extras_require={
+        "xgboost": ["py-xgboost==0.8"],
+        "Hyperparam Opt.": ["scikit-optimize"]},
     package_data={
         "autoclf": [
             "datasets/*.csv", "datasets/ReadMe.txt", 

@@ -31,6 +31,8 @@ import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
+seed = 7
+
 # list of candidate hyperparameter grids for GSCV and distros for RSCV
 # param spaces for searching with Hyperopt
 
@@ -130,7 +132,6 @@ RFC_gscv_param_grid = dict(
 RFC_param_grid = RFC_gscv_param_grid
 RFC_param_grid['RandomForestClf_2nd__n_estimators'] = sp_randint(100, 1000)
 
-
 # ExtraTrees Clf
 
 ETC_param_grid = dict(
@@ -164,7 +165,6 @@ GBC_param_grid = dict(
         'GBoostingClf_2nd__max_features'],
     GBoostingClf_2nd__max_depth=sp_randint(5, 50),
     )
-
 
 # SVC
 
@@ -249,10 +249,6 @@ for n in np.arange(0, 3):
 
 # dict of models and their associated parameters
 # if it comes out that the best model is LogReg, no comparison is needed
-
-seed = 7
-# np.random.seed(seed)
-
 
 # 'DummyClf_2nd' initialized inside evaluate.py at run-time
 

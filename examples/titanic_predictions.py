@@ -112,6 +112,23 @@ try:
     elif sklearn.__version__[:4] == '0.20':
         clfs.append(
             jl.load('models/titan_LogRClf_2nd_light_opt_0525.pkl'))
+            
+        # KerasEstimator = jl.load(
+        #     'path/to/feature_transformer.pkl')
+        # KerasEstimator.steps.append(
+        #     ('KerasClf', load_model('path/to/keras_clf.h5')))
+        KerasEstimator = jl.load(
+            'models/titan_deep_nn_Clf_2nd_feateng_for_keras_model_0754.pkl')
+        KerasEstimator.steps.append(
+            ('deep_nn_Clf_2nd_0754', load_model(
+                'models/titan_deep_nn_Clf_2nd_None_0754.h5')))
+        clfs.append(KerasEstimator)
+        KerasEstimator = jl.load(
+            'models/titan_KerasClf_2nd_feateng_for_keras_model_0375.pkl')
+        KerasEstimator.steps.append(
+            ('KerasClf_2nd_refitted_rscv_0375', load_model(
+                'models/titan_KerasClf_2nd_refitted_rscv_0375.h5')))
+        clfs.append(KerasEstimator)
 except FileNotFoundError as fe:
     print(fe)
 except Exception:
@@ -130,10 +147,6 @@ if sklearn.__version__[:4] == '0.19':
     print("======= Transfomer + Keras model from cf.[tune_]calibrate_best_model()")
 
     try:
-        # KerasEstimator = jl.load(
-        #     'path/to/feature_transformer.pkl')
-        # KerasEstimator.steps.append(
-        #     ('KerasClf', load_model('path/to/keras_clf.h5')))
         KerasEstimator = jl.load(
             'models/titan_deeper_nn_Clf_2nd_feateng_for_keras_model_0121.pkl')
         KerasEstimator.steps.append(

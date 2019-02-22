@@ -1,4 +1,4 @@
-"""Learning from Otto Gropu sales data."""
+"""Categorize Otto Group sales."""
 
 from sklearn.pipeline import Pipeline
 from pandas import read_csv

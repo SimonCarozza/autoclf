@@ -2,6 +2,7 @@ from pandas import read_csv
 import os
 import sys
 from autoclf.encoding import labelenc as lc
+from keras.models import load_model
 from sklearn.externals import joblib as jl
 import sklearn
 import numpy as np
@@ -60,7 +61,6 @@ print("Original data sample before encoding (values):", original_X[:5])
 df = lc.dummy_encode(df)
 df.head()
 
-
 X = df.values
 
 # print("Original data sample before encoding (values):", original_df[:5])
@@ -101,8 +101,13 @@ try:
             moddir_36, "models",
             "iris_LogRClf_2nd_final_calib_rscv_0429.pkl")
         clfs.append(jl.load(lr_pkl))
-        clfs.append(jl.load(
-            "models/Iris_KNeighborsClf_2nd_final_nocalib_rscv_0136.pkl"))
+
+        kr_estim = jl.load(
+            "models/Iris_KerasClf_2nd_feateng_for_keras_model_0289.pkl")
+        kr_estim.steps.append(
+            ('Iris_KerasClf_2nd_0289', 
+            load_model("models/Iris_KerasClf_2nd_refitted_rscv_0289.h5")))
+        clfs.append(kr_estim)
 except FileNotFoundError as fne:
     print(fne)
 except Exception:

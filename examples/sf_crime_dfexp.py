@@ -1,4 +1,4 @@
-"""Learning from San Francisco crime data set."""
+"""Discover where the next crime will be committed in San Francisco."""
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_selection import SelectFromModel

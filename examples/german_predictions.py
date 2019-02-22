@@ -109,17 +109,56 @@ else:
             bin_event, feat_str)
 
 print()
-print()
+# print("======= Other classifiers from both calibration methods")
+
+# clfs = []
+
+# try:
+#     clfs.append(jl.load(
+#         'models/GermanCr_RandomForestClf_2nd.pkl'))
+#     clfs.append(jl.load(
+#         'models/GermanCr_ExtraTreesClf_2nd_final_nocalib_rscv.pkl'))
+# except OSError as oe:
+#     print(oe)
+# except Exception as e:
+#     raise e
+# else:
+
+#     pr.predictions_with_full_estimators(
+#         clfs, original_X, X, pick_indexes, X_indexes, bin_event, feat_str)
+
+# print()
+# print()
 
 clfs = []
 
-print("======= Transfomer + Keras model from cf.tune_calibrate_best_model()")
+print("======= Transfomer + Keras model from cf.calibrate_best_model()")
 
 try:
     # KerasEstimator = jl.load(
     #     'path/to/feature_transformer.pkl')
     # KerasEstimator.steps.append(
     #     ('KerasClf', load_model('path/to/keras_clf.h5')))
+
+    KerasEstimator = jl.load(
+        'models/GermanCr_larger_deep_nn_Clf_2nd_feateng_for_keras_model_0498.pkl')
+    KerasEstimator.steps.append(
+        ('larger_deep_nn_Clf_2nd_nocalib_None_0498', load_model(
+            'models/GermanCr_larger_deep_nn_Clf_2nd_None_0498.h5')))
+    clfs.append(KerasEstimator)
+except OSError as oe:
+    print(oe)
+except Exception as e:
+    raise e
+else:
+
+    print("Pipeline of transformer + Keras Clf:")
+    print(KerasEstimator)
+    print()
+
+print("======= Transfomer + Keras model from cf.tune_calibrate_best_model()")
+
+try:
     KerasEstimator = jl.load(
         'models/GermanCr_KerasClf_2nd_feateng_for_keras_model_0368.pkl')
     KerasEstimator.steps.append(
@@ -143,11 +182,12 @@ try:
     #     'path/to/feature_transformer.pkl')
     # KerasEstimator.steps.append(
     #     ('KerasClf', load_model('path/to/keras_clf.h5')))
+
     KerasEstimator = jl.load(
-        'models/GermanCr_KerasClf_2nd_feateng_for_keras_model_0888.pkl')
+        'models/GermanCr_KerasClf_2nd_feateng_for_keras_model_0726.pkl')
     KerasEstimator.steps.append(
-        ('KerasClf_2nd_refitted_rscv_0888', load_model(
-            'models/GermanCr_KerasClf_2nd_refitted_rscv_0888.h5')))
+        ('KerasClf_2nd_refitted_rscv_0726', load_model(
+            'models/GermanCr_KerasClf_2nd_refitted_rscv_0726.h5')))
     clfs.append(KerasEstimator)
 except OSError as oe:
     print(oe)

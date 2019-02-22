@@ -98,15 +98,17 @@ try:
     #     'path/to/feature_transformer.pkl')
     # KerasEstimator.steps.append(
     #     ('KerasClf', load_model('path/to/keras_clf.h5')))
+    
     KerasEstimator = jl.load(
-        'models/Digits_deep_nn_Clf_2nd_feateng_for_keras_model_0428.pkl')
+        'models/Digits_deep_nn_Clf_2nd_feateng_for_keras_model_0313.pkl')
     KerasEstimator.steps.append(
-        ('Digits_deep_nn_Clf_2nd', load_model(
-            'models/Digits_deep_nn_Clf_2nd_None_0428.h5')))
+        ('Digits_deep_nn_Clf_2nd_0313', load_model(
+            'models/Digits_deep_nn_Clf_2nd_None_0313.h5')))
+    clfs.append(KerasEstimator)
     KerasEstimator = jl.load(
         'models/Digits_KerasClf_2nd_feateng_for_keras_model_0546.pkl')
     KerasEstimator.steps.append(
-        ('KerasClf_2nd_refitted_rscv_0888', load_model(
+        ('KerasClf_2nd_refitted_rscv_0546', load_model(
             'models/Digits_KerasClf_2nd_refitted_rscv_0546.h5')))
     clfs.append(KerasEstimator)
 except OSError as oe:

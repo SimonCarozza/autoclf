@@ -1,4 +1,4 @@
-"""Nested-cv to evaluate models and learn from the Titanic data set."""
+"""Nested-cv to evaluate models and learn who'll survive the Titanic."""
 
 from sklearn.pipeline import Pipeline
 from pandas import read_csv
