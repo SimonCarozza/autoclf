@@ -782,7 +782,7 @@ def calibrate_best_model(
 
     # Evalute prediction confidence and, in case, calibrate
 
-    # X = X.astype(np.float64)
+    # X = X.astype(np.float32)
 
     try:
         models_data[0]
@@ -1070,7 +1070,7 @@ def tune_calibrate_best_model(
 
     # Evalute prediction confidence and, in case, calibrate
 
-    # X = X.astype(np.float64)    
+    # X = X.astype(np.float32)    
 
     tuning_method = None
 

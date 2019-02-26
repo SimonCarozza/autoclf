@@ -980,14 +980,14 @@ def scoring_and_tt_split(df, target, test_size=0.3, random_state=0, Xy=False):
 def float_columns(X):
     for col in X.columns:
         if X[col].dtype in ('uint8','int8', 'int32', 'int64'):
-            X[col] = X[col].astype(np.float64)
+            X[col] = X[col].astype(np.float32)
 
     return X
 
 
 def columns_as_type_float(X):
     try:
-        X = X.astype(float)
+        X = X.astype(np.float32)
     except MemoryError as me:
         print("MemoryError !")
         print(me)
@@ -1191,11 +1191,11 @@ def auto_X_encoding(
         print()
 
         print("Label-Encoding X_train")
-        X_train_encoded = lc.dummy_encode(X_train).astype(np.float64)
+        X_train_encoded = lc.dummy_encode(X_train).astype(np.float32)
         print()
 
         print("Label-Encoding X_test")
-        X_test_encoded = lc.dummy_encode(X_test).astype(np.float64)
+        X_test_encoded = lc.dummy_encode(X_test).astype(np.float32)
 
         featselector = create_feature_selector(
             X_train_encoded, encoding, random_state)
@@ -1222,18 +1222,18 @@ def auto_X_encoding(
             print(me)
             print()
             print("Label-Encoding X_train")
-            X_train_encoded = lc.dummy_encode(X_train).astype(np.float64)
+            X_train_encoded = lc.dummy_encode(X_train).astype(np.float32)
             print()
 
             print("Label-Encoding X_test")
-            X_test_encoded = lc.dummy_encode(X_test).astype(np.float64)
+            X_test_encoded = lc.dummy_encode(X_test).astype(np.float32)
 
             encoding = 'le'
         except Exception as e:
             print("One-Hot-Encoding failed.")
             raise e
         else:
-            # X_train_encoded =X_train_encoded.astype(np.float64)
+            # X_train_encoded =X_train_encoded.astype(np.float32)
             X_train_encoded = columns_as_type_float(X_train_encoded)
             print()
             
@@ -1251,7 +1251,7 @@ def auto_X_encoding(
             except Exception as e:
                 raise e
             else:
-                # X_test_encoded = X_test_encoded.astype(np.float64)
+                # X_test_encoded = X_test_encoded.astype(np.float32)
                 X_test_encoded = columns_as_type_float(X_test_encoded)
                 print()
 
