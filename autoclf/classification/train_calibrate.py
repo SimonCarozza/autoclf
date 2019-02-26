@@ -141,7 +141,7 @@ def classic_cv_calibration_process(
     X_train, y_train, X_test, y_test, y_type, best_model_name, 
     best_model_estim, weights_test, weights_all, scoring, best_score, 
     best_nn_build_fn, nb_epoch, batch_size, tuning_method, models_data, 
-    labels, d_name, serial):
+    kfold, labels, d_name, serial):
 
     temp_estimator = training_estimator
 
@@ -366,7 +366,7 @@ def nested_cv_calibration_process(
     X_train, y_train, X_test, y_test, y_type, best_model_name, 
     best_model_estim, weights_test, weights_all, scoring, best_score, 
     n_splits, n_iter, best_nn_build_fn, nb_epoch, param_grid, tuning_method, 
-    models_data, labels, d_name, serial, random_state=0):
+    models_data, kfold, labels, d_name, serial, random_state=0):
 
     temp_estimator = training_estimator
 
@@ -869,7 +869,7 @@ def calibrate_best_model(
             lr_pred_score, training_pipeline, final_pipeline, X, y, X_train, y_train, 
             X_test, y_test, Y_type, best_model_name, best_model_estim, w, w_all, 
             scoring, best_score, best_nn_build_fn, nb_epoch, batch_size, tuning_method, 
-            models_data, labels, d_name, serial)
+            models_data, kfold, labels, d_name, serial)
 
         if Y_type == 'binary':
             eu.plot_calibration_curves(
@@ -1168,7 +1168,7 @@ def tune_calibrate_best_model(
             X_train, y_train, X_test, y_test, Y_type, best_model_name, 
             best_model_estim, w, w_all, scoring, best_score, n_splits, n_iter,
             best_nn_build_fn, nb_epoch, param_grid, tuning_method, models_data, 
-            labels, d_name, serial, random_state)
+            kfold, labels, d_name, serial, random_state)
 
         if Y_type == "binary":
             eu.plot_calibration_curves(

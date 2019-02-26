@@ -1,9 +1,8 @@
 package:
   name: autoclf
-  version: "0.1.6"
+  version: "0.1.7"
 
 source:
-  # git_rev: 0.1.4
   git_url: https://simoneci@bitbucket.org/simoneci/autoclf.git
 
 requirements:

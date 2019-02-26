@@ -232,6 +232,19 @@ def perform_classic_cv_evaluation_and_calibration(
 
     print()
 
+    print()
+    print("X_train shape: ", X_train_transformed.shape)
+    # print("X_train -- first row:", X_train.values[0])
+    print("X_train -- first row:", X_train_transformed[0])
+    print("y_train shape: ", y_train.shape)
+    print()
+
+    print("X_test shape: ", X_test_transformed.shape)
+    # print("X_test -- first row:", X_test.values[0])
+    print("X_test -- first row:", X_test_transformed[0])
+    print("y_test shape: ", y_test.shape)
+    print()
+
     # input("Press any key to continue...")
 
     # Start evaluation process
@@ -503,6 +516,9 @@ def perform_nested_cv_evaluation_and_calibration(
     train_index, test_index = auto_feat_eng_data['tt_index']
 
     print()
+    if followup:
+        print("X_train_transformed shape: ", X_train_transformed.shape)
+        print("X_test_transformed shape: ", X_test_transformed.shape)
     
     n_splits = au.select_nr_of_splits_for_kfold_cv()
 
@@ -821,17 +837,31 @@ def select_evaluation_strategy(
             print()
         else:
 
-            if odf is not None:
+            if odf is not None:  # df has been reduced in size
 
-                print("### Split and encode the whole dataframe")
+                msg = "Do you want to use the full dataset?"
 
-                split_enc_X_data = eu.split_and_X_encode(
-                     odf, target, test_frac, random_state)
+                if au.say_yes_or_no(msg) in {"YES", "yes", "Y", "y"}:
 
-                auto_feat_eng_data, scoring, Y_type, classes = split_enc_X_data
+                    print()
+                    print("### Split and encode the whole dataframe")
+                    print("Warning! No feature engineering implemented!")
+                    print()
 
-            else:
-                print("### Use current data from small/smaller dataframe")
+                    split_enc_X_data = eu.split_and_X_encode(
+                        odf, target, test_frac, random_state)
+
+                    auto_feat_eng_data, scoring, Y_type, classes = split_enc_X_data
+
+                else:
+                    print("### Use current data from small/smaller dataframe")
+            
+            else:  # df has not been reduced in size, full df
+                # you already did you feature engineering
+
+                print()
+                print("### Using the whole dataframe")
+                print()
 
             perform_nested_cv_evaluation_and_calibration(
                auto_feat_eng_data, scoring, Y_type, labels, 

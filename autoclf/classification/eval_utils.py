@@ -1289,11 +1289,11 @@ def auto_X_encoding(
 
     if encoding == 'le':
         plot_feature_importances(pipeline, X_train_encoded)
+        fs = 'ETR-based feature selection'
         
     else:
         # OHE
         fs = 'L1-based feature selection'
-        # fs = 'ETR-based feature selection'
 
     auto_feat_eng_data = {}
 
