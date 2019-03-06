@@ -1149,20 +1149,10 @@ def auto_X_encoding(
         X_train = X_train.fillna(method='bfill')
         X_train = X_train.fillna(method='pad')
 
-    if y_train.isnull().values.any():
-
-        y_train = y_train.fillna(method='bfill')
-        y_train = y_train.fillna(method='pad')
-
     if X_test.isnull().values.any():
 
         X_test = X_test.fillna(method='bfill')
         X_test = X_test.fillna(method='pad')
-
-    if y_test.isnull().values.any():
-
-        y_test = y_test.fillna(method='bfill')
-        y_test = y_test.fillna(method='pad')
 
     print()
     print("Before encoding:")
