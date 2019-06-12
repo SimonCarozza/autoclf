@@ -23,5 +23,3 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-
-autoclf/datasets/creditcard.csv
