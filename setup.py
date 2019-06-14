@@ -15,7 +15,7 @@ if sys.version_info < req_version:
 
 setup(
     name="autoclf",
-    version="0.1.7",
+    version="0.1.8",
     author="Simon Carozza",
     author_email="simoncarozza@gmail.com",
     description="A tabular data classifier",
