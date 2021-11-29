@@ -154,3 +154,5 @@ autoclf is born out of the simple need of **trying out sklearn's and Keras' feat
 As a toy concept mini-framework, autoclf **has not been tested following a [TDD](https://en.wikipedia.org/wiki/Test-driven_development) approach**, so it's not guaranteed to be stable and is **not aimed to nor ready for production**.
 
 autoclf has been developed for **Windows 10** but has proved to work smoothly in Ubuntu Linux as well.
+
+**NOTE**: Please note that this repo is archived and no longer actively used and code has moved to [autolrn](https://github.com/SimonCarozza/autolrn), which you can use for regression as well. 
